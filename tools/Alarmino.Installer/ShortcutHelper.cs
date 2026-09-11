@@ -105,7 +105,7 @@ public static class ShortcutHelper
         key.SetValue("DisplayIcon", exe);
         key.SetValue("Publisher", "JorgeBSTeacher");
         key.SetValue("InstallLocation", installDir);
-        key.SetValue("UninstallString", $"\"{Path.Combine(installDir, "UninstallAlarmino.exe")}\"");
+        key.SetValue("UninstallString", $"\"{Path.Combine(installDir, "UninstallAlarmino.exe")}\" /Uninstall");
         key.SetValue("NoModify", 1, RegistryValueKind.DWord);
         key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         key.SetValue("EstimatedSize", 200000, RegistryValueKind.DWord);

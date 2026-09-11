@@ -4,13 +4,16 @@ using Microsoft.Win32;
 
 namespace Alarmino.Services;
 
-/// <summary>Gestiona la autoejecución de Alarmino al iniciar Windows (HKCU Run, con /min).</summary>
+/// <summary>
+/// Gestiona la autoejecución de Alarmino al iniciar Windows (HKCU Run).
+/// Con <paramref name="startVisible"/> arranca mostrando la ventana; si no, arranca minimizado a la bandeja (/min).
+/// </summary>
 public static class AutostartService
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "Alarmino";
 
-    public static void SetEnabled(bool enabled)
+    public static void SetEnabled(bool enabled, bool startVisible = false)
     {
         try
         {
@@ -25,7 +28,8 @@ public static class AutostartService
                 string path = Process.GetCurrentProcess().MainModule?.FileName ?? Environment.ProcessPath ?? string.Empty;
                 if (!string.IsNullOrWhiteSpace(path))
                 {
-                    key.SetValue(ValueName, $"\"{path}\" /min");
+                    string value = startVisible ? $"\"{path}\"" : $"\"{path}\" /min";
+                    key.SetValue(ValueName, value);
                 }
             }
             else
@@ -44,7 +48,8 @@ public static class AutostartService
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-            return key?.GetValue(ValueName) is string value && value.Contains("/min", StringComparison.Ordinal);
+            return key?.GetValue(ValueName) is string value &&
+                value.Contains("Alarmino", StringComparison.OrdinalIgnoreCase);
         }
         catch
         {

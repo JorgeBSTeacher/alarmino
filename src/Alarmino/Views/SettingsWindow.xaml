@@ -1,0 +1,100 @@
+<Window x:Class="Alarmino.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Alarmino — Configuración"
+        Width="520"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="True">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="150" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Volumen -->
+        <TextBlock Grid.Row="0" Text="Volumen general" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+        <DockPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,10">
+            <TextBlock DockPanel.Dock="Right" Text="{Binding VolumePercent}" Style="{StaticResource SecondaryText}"
+                       Width="40" TextAlignment="Right" />
+            <Slider Minimum="0" Maximum="100" Value="{Binding VolumePercent, Mode=TwoWay}" />
+        </DockPanel>
+
+        <!-- Tema -->
+        <TextBlock Grid.Row="1" Text="Tema" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <RadioButton Content="Oscuro" IsChecked="{Binding IsDarkMode}" Margin="0,0,16,0" />
+            <RadioButton Content="Claro" IsChecked="{Binding IsLightMode}" />
+        </StackPanel>
+
+        <!-- Autostart -->
+        <TextBlock Grid.Row="2" Text="Al iniciar Windows" Style="{StaticResource SecondaryText}" />
+        <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,0,0,10">
+            <CheckBox Content="Ejecutar Alarmino automáticamente al iniciar sesión"
+                      IsChecked="{Binding AutoStartEnabled}"
+                      Margin="0,0,0,6" />
+            <CheckBox Content="Mostrar la ventana al inicio (si no, arranca minimizado en la bandeja)"
+                      IsChecked="{Binding StartVisibleOnLogin}" />
+        </StackPanel>
+
+        <!-- Notificaciones -->
+        <TextBlock Grid.Row="3" Text="Notificaciones" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+        <StackPanel Grid.Row="3" Grid.Column="1" Margin="0,0,0,10">
+            <CheckBox Content="Sonido de aviso de Windows al saltar una alarma"
+                      IsChecked="{Binding NotificationSoundEnabled}" />
+        </StackPanel>
+
+        <!-- Sonido de ALARMA -->
+        <TextBlock Grid.Row="4" Text="Sonido de ALARMA" Style="{StaticResource SecondaryText}" VerticalAlignment="Top" Margin="0,6,0,0" />
+        <StackPanel Grid.Row="4" Grid.Column="1" Margin="0,0,0,10">
+
+            <RadioButton Content="Sonido predeterminado" IsChecked="{Binding AlarmButtonUsePreset}" Margin="0,0,0,4" />
+            <ComboBox ItemsSource="{Binding AlarmButtonPresets}"
+                      DisplayMemberPath="DisplayName"
+                      SelectedValuePath="Id"
+                      SelectedValue="{Binding AlarmButtonPresetId}"
+                      Width="240" HorizontalAlignment="Left"
+                      IsEnabled="{Binding AlarmButtonUsePreset}" Margin="16,0,0,8" />
+
+            <RadioButton Content="Archivo personalizado…" IsChecked="{Binding AlarmButtonUseFile}" Margin="0,0,0,4" />
+            <Grid Margin="16,0,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding AlarmButtonFilePathDisplay}" Style="{StaticResource SecondaryText}"
+                           VerticalAlignment="Center" Margin="0,0,8,0" />
+                <Button Grid.Column="1" Content="Examinar…"
+                        Command="{Binding BrowseAlarmSoundCommand}"
+                        Style="{StaticResource SecondaryButton}"
+                        IsEnabled="{Binding AlarmButtonUseFile}" Padding="12,4" />
+            </Grid>
+        </StackPanel>
+
+        <!-- Información -->
+        <Border Grid.Row="5" Grid.ColumnSpan="2" Background="{DynamicResource BrushCardBg}" BorderBrush="{DynamicResource BrushBorder}"
+                BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,16,0,0">
+            <StackPanel>
+                <TextBlock Text="Cómo funciona" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBlock Style="{StaticResource SecondaryText}" TextWrapping="Wrap"
+                           Text="Las alarmas solo suenan mientras Alarmino está en ejecución (permanece en la bandeja al cerrar la ventana). Para terminar la aplicación usa «Salir» desde el icono de la bandeja. El botón ALARMA reproduce una vez el sonido que elijas arriba." />
+            </StackPanel>
+        </Border>
+
+        <!-- Acciones -->
+        <StackPanel Grid.Row="6" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cerrar" Click="OnCloseClick"
+                    Style="{StaticResource SecondaryButton}" Padding="18,8" />
+        </StackPanel>
+    </Grid>
+</Window>

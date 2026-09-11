@@ -24,6 +24,7 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
     private string _repeatCountText = "2";
     private string _pauseText = "1";
     private string _errorMessage = string.Empty;
+    private bool _isPreviewing;
 
     public AlarmEditorViewModel(Alarm alarm)
     {
@@ -143,6 +144,26 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
 
     public event Action<PlaybackRequest>? PreviewRequested;
 
+    /// <summary>Solicita detener la previsualización.</summary>
+    public event Action? StopPreviewRequested;
+
+    public bool IsPreviewing
+    {
+        get => _isPreviewing;
+        private set
+        {
+            if (SetProperty(ref _isPreviewing, value))
+            {
+                OnPropertyChanged(nameof(PreviewButtonText));
+            }
+        }
+    }
+
+    public string PreviewButtonText => IsPreviewing ? "Parar sonido" : "Probar sonido";
+
+    /// <summary>Restablece el botón cuando el audio termina solo (dispatcher del editor).</summary>
+    public void OnPlaybackFinished() => IsPreviewing = false;
+
     [RelayCommand]
     private void Browse()
     {
@@ -163,6 +184,13 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
     [RelayCommand]
     private void Preview()
     {
+        if (IsPreviewing)
+        {
+            StopPreviewRequested?.Invoke();
+            IsPreviewing = false;
+            return;
+        }
+
         if (!TryValidateCore(out string _) && !string.IsNullOrEmpty(ErrorMessage))
         {
             return;
@@ -176,6 +204,7 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
             1,
             0,
             PreviewVolumePercent));
+        IsPreviewing = true;
     }
 
     [RelayCommand]

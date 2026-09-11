@@ -20,7 +20,7 @@ public static class PresetSynthesizer
             _ => 3.6,
         };
 
-        using var ms = new MemoryStream();
+        var ms = new MemoryStream();
         using (var writer = new WaveFileWriter(ms, new WaveFormat(SampleRate, 16, 1)))
         {
             int samples = (int)(duration * SampleRate);
@@ -37,6 +37,7 @@ public static class PresetSynthesizer
             }
         }
 
+        // El MemoryStream pasa a ser propiedad del reader (NO usar `using` aquí).
         ms.Position = 0;
         return new WaveFileReader(ms);
     }

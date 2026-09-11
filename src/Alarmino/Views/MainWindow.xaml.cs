@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Threading;
 using Alarmino.Core.Models;
 using Alarmino.Core.Services;
 using Alarmino.ViewModels;
@@ -8,6 +9,8 @@ namespace Alarmino.Views;
 
 public partial class MainWindow : Window
 {
+    private AlarmEditorViewModel? _activeEditor;
+
     private MainViewModel ViewModel => (MainViewModel)DataContext;
 
     public MainWindow()
@@ -19,6 +22,7 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         ViewModel.EditRequested += OnEditRequested;
+        ViewModel.PlaybackFinished += OnPlaybackFinished;
     }
 
     private void OnEditRequested(AlarmViewModel? existing)
@@ -29,11 +33,20 @@ public partial class MainWindow : Window
             PreviewVolumePercent = ViewModel.VolumePercent,
         };
         editor.PreviewRequested += OnEditorPreview;
+        editor.StopPreviewRequested += OnEditorStopPreview;
+        _activeEditor = editor;
 
         var window = new EditorWindow(editor) { Owner = this };
         bool saved = window.ShowDialog() == true;
 
+        if (editor.IsPreviewing)
+        {
+            OnEditorStopPreview();
+        }
+
         editor.PreviewRequested -= OnEditorPreview;
+        editor.StopPreviewRequested -= OnEditorStopPreview;
+        _activeEditor = null;
 
         if (saved)
         {
@@ -51,6 +64,19 @@ public partial class MainWindow : Window
     }
 
     private void OnEditorPreview(PlaybackRequest request) => ViewModel.Preview(request);
+
+    private void OnEditorStopPreview() => ViewModel.StopPreview();
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        var window = new SettingsWindow { Owner = this, DataContext = ViewModel };
+        window.ShowDialog();
+    }
+
+    private void OnPlaybackFinished()
+    {
+        Dispatcher.InvokeAsync(() => _activeEditor?.OnPlaybackFinished());
+    }
 
     protected override void OnClosing(CancelEventArgs e)
     {

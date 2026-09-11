@@ -16,13 +16,40 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Cabecera -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Stretch" Margin="0,0,0,4">
-            <StackPanel Orientation="Vertical">
+        <!-- Cabecera: título a la izquierda, botón ALARMA a la derecha -->
+        <Grid Grid.Row="0" Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
                 <TextBlock Text="Alarmino" FontSize="24" FontWeight="Bold" />
                 <TextBlock Text="{Binding AppVersion}" Style="{StaticResource SecondaryText}" />
             </StackPanel>
-        </StackPanel>
+
+            <Button Grid.Column="1"
+                    Content="ALARMA"
+                    Command="{Binding TriggerAlarmCommand}"
+                    VerticalAlignment="Center" Padding="26,10" MinHeight="40" FontSize="16"
+                    Cursor="Hand">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Setter Property="Foreground" Value="White" />
+                        <Setter Property="Background" Value="{DynamicResource BrushDanger}" />
+                        <Setter Property="FontWeight" Value="Black" />
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource BrushDangerHover}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Opacity" Value="0.85" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+        </Grid>
 
         <!-- Barra de acciones -->
         <WrapPanel Grid.Row="1" Margin="0,8,0,12">
@@ -46,207 +73,124 @@
             <RadioButton Content="Por día" IsChecked="{Binding SortByDay}" VerticalAlignment="Center" Margin="0,0,24,0" />
 
             <Button Content="＋ Añadir alarma" Command="{Binding AddAlarmCommand}" Padding="18,8" />
+            <Button Content="⚙ Configuración" Click="OnSettingsClick"
+                    Style="{StaticResource SecondaryButton}" Margin="12,0,0,0" Padding="14,8" />
         </WrapPanel>
 
-        <!-- Contenido -->
-        <TabControl Grid.Row="2">
-            <TabItem Header="Alarmas">
-                <Grid Margin="0,12,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+        <!-- Contenido: solo alarmas -->
+        <Grid Grid.Row="2">
+            <TextBlock Text="Todavía no hay alarmas. Pulsa «Añadir alarma» para crear la primera."
+                       Style="{StaticResource SecondaryText}" FontSize="14"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Visibility="{Binding HasAlarms, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
 
-                    <TextBlock Text="Todavía no hay alarmas. Pulsa «Añadir alarma» para crear la primera."
-                               Style="{StaticResource SecondaryText}" FontSize="14"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               Visibility="{Binding HasAlarms, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding AlarmsView}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{DynamicResource BrushCardBg}"
+                                    BorderBrush="{DynamicResource BrushBorder}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Margin="0,0,0,12"
+                                    Padding="16,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
 
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding AlarmsView}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Background="{DynamicResource BrushCardBg}"
-                                            BorderBrush="{DynamicResource BrushBorder}"
-                                            BorderThickness="1"
-                                            CornerRadius="10"
-                                            Margin="0,0,0,12"
-                                            Padding="16,12">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
+                                    <!-- Hora -->
+                                    <StackPanel Grid.Column="0" Margin="0,0,20,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding TimeText}" FontSize="34" FontWeight="Bold"
+                                                   Foreground="{DynamicResource BrushAccent}" />
+                                        <TextBlock Text="{Binding RepeatText}" Style="{StaticResource SecondaryText}" />
+                                    </StackPanel>
 
-                                            <!-- Hora -->
-                                            <StackPanel Grid.Column="0" Margin="0,0,20,0" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding TimeText}" FontSize="34" FontWeight="Bold"
-                                                           Foreground="{DynamicResource BrushAccent}" />
-                                                <TextBlock Text="{Binding RepeatText}" Style="{StaticResource SecondaryText}" />
-                                            </StackPanel>
+                                    <!-- Información -->
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding DaysText}" Style="{StaticResource SecondaryText}" Margin="0,2,0,0" />
 
-                                            <!-- Información -->
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding DaysText}" Style="{StaticResource SecondaryText}" Margin="0,2,0,0" />
+                                        <ItemsControl ItemsSource="{Binding DayChips}" Margin="0,6,0,0">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border CornerRadius="4" Padding="7,2" Margin="0,0,4,0">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{DynamicResource BrushChipInactive}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Active}" Value="True">
+                                                                        <Setter Property="Background" Value="{DynamicResource BrushChipActive}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding Letter}" FontSize="11" FontWeight="SemiBold">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource BrushChipInactiveText}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Active}" Value="True">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource BrushChipActiveText}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
 
-                                                <ItemsControl ItemsSource="{Binding DayChips}" Margin="0,6,0,0">
-                                                    <ItemsControl.ItemsPanel>
-                                                        <ItemsPanelTemplate>
-                                                            <StackPanel Orientation="Horizontal" />
-                                                        </ItemsPanelTemplate>
-                                                    </ItemsControl.ItemsPanel>
-                                                    <ItemsControl.ItemTemplate>
-                                                        <DataTemplate>
-                                                            <Border CornerRadius="4" Padding="7,2" Margin="0,0,4,0">
-                                                                <Border.Style>
-                                                                    <Style TargetType="Border">
-                                                                        <Setter Property="Background" Value="{DynamicResource BrushChipInactive}" />
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding Active}" Value="True">
-                                                                                <Setter Property="Background" Value="{DynamicResource BrushChipActive}" />
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </Border.Style>
-                                                                <TextBlock Text="{Binding Letter}" FontSize="11" FontWeight="SemiBold">
-                                                                    <TextBlock.Style>
-                                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                                                            <Setter Property="Foreground" Value="{DynamicResource BrushChipInactiveText}" />
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding Active}" Value="True">
-                                                                                    <Setter Property="Foreground" Value="{DynamicResource BrushChipActiveText}" />
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </TextBlock.Style>
-                                                                </TextBlock>
-                                                            </Border>
-                                                        </DataTemplate>
-                                                    </ItemsControl.ItemTemplate>
-                                                </ItemsControl>
+                                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                            <TextBlock Text="Sonido:" Style="{StaticResource SecondaryText}" Margin="0,0,4,0" />
+                                            <TextBlock Text="{Binding SoundText}" Style="{StaticResource SecondaryText}" Margin="0,0,12,0" />
+                                            <TextBlock Text="·" Style="{StaticResource SecondaryText}" Margin="0,0,8,0" />
+                                            <TextBlock Text="{Binding ModeText}" Style="{StaticResource SecondaryText}" />
+                                        </StackPanel>
+                                    </StackPanel>
 
-                                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                                    <TextBlock Text="Sonido:" Style="{StaticResource SecondaryText}" Margin="0,0,4,0" />
-                                                    <TextBlock Text="{Binding SoundText}" Style="{StaticResource SecondaryText}" Margin="0,0,12,0" />
-                                                    <TextBlock Text="·" Style="{StaticResource SecondaryText}" Margin="0,0,8,0" />
-                                                    <TextBlock Text="{Binding ModeText}" Style="{StaticResource SecondaryText}" />
-                                                </StackPanel>
-                                            </StackPanel>
+                                    <!-- Acciones -->
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
+                                            <Button Content="Editar"
+                                                    Command="{Binding DataContext.EditAlarmCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}"
+                                                    Style="{StaticResource SecondaryButton}" Padding="12,6" Margin="0,0,6,0" />
+                                            <Button Content="Eliminar"
+                                                    Command="{Binding DataContext.DeleteAlarmCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}"
+                                                    Style="{StaticResource DangerButton}" Padding="12,6" />
+                                        </StackPanel>
 
-                                            <!-- Acciones -->
-                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
-                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
-                                                    <Button Content="Editar"
-                                                            Command="{Binding DataContext.EditAlarmCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                            CommandParameter="{Binding}"
-                                                            Style="{StaticResource SecondaryButton}" Padding="12,6" Margin="0,0,6,0" />
-                                                    <Button Content="Eliminar"
-                                                            Command="{Binding DataContext.DeleteAlarmCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                            CommandParameter="{Binding}"
-                                                            Style="{StaticResource DangerButton}" Padding="12,6" />
-                                                </StackPanel>
-
-                                                <ToggleButton IsChecked="{Binding IsActive}" MinWidth="130"
-                                                              HorizontalAlignment="Right">
-                                                    <ToggleButton.Style>
-                                                        <Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
-                                                            <Setter Property="Content" Value="Apagada" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsActive}" Value="True">
-                                                                    <Setter Property="Content" Value="Activa" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </ToggleButton.Style>
-                                                </ToggleButton>
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </Grid>
-            </TabItem>
-
-            <TabItem Header="Registro de eventos">
-                <Grid Margin="0,12,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-
-                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
-                        <Button DockPanel.Dock="Right" Content="Limpiar historial"
-                                Command="{Binding ClearEventsCommand}"
-                                Style="{StaticResource DangerButton}" Padding="12,6" />
-                        <TextBlock Text="Últimos sucesos (todas las alarmas)" Style="{StaticResource SecondaryText}" />
-                    </DockPanel>
-
-                    <DataGrid Grid.Row="1" ItemsSource="{Binding Events}">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Fecha y hora" Width="180" Binding="{Binding TimeText}" />
-                            <DataGridTextColumn Header="Alarma" Width="*" Binding="{Binding AlarmName}" />
-                            <DataGridTemplateColumn Header="Estado" Width="120">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding State}" Foreground="{DynamicResource BrushTextPrimary}" FontWeight="SemiBold">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                                    <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
+                                        <ToggleButton IsChecked="{Binding IsActive}" MinWidth="130"
+                                                      HorizontalAlignment="Right">
+                                            <ToggleButton.Style>
+                                                <Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+                                                    <Setter Property="Content" Value="Apagada" />
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Path=State}" Value="Played">
-                                                            <Setter Property="Text" Value="Tocada" />
-                                                            <Setter Property="Foreground" Value="{DynamicResource BrushSuccess}" />
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Path=State}" Value="Missed">
-                                                            <Setter Property="Text" Value="Omitida" />
-                                                            <Setter Property="Foreground" Value="{DynamicResource BrushDanger}" />
+                                                        <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                            <Setter Property="Content" Value="Activa" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </Grid>
-            </TabItem>
-
-            <TabItem Header="Configuración">
-                <StackPanel Margin="0,12,0,0" MaxWidth="560" HorizontalAlignment="Left">
-
-                    <TextBlock Text="Volumen general" Margin="0,4,0,4" />
-                    <DockPanel Margin="0,0,0,10">
-                        <TextBlock DockPanel.Dock="Right" Text="{Binding VolumePercent}" Style="{StaticResource SecondaryText}"
-                                   Width="40" TextAlignment="Right" />
-                        <Slider Minimum="0" Maximum="100" Value="{Binding VolumePercent, Mode=TwoWay}" />
-                    </DockPanel>
-
-                    <TextBlock Text="Tema" Margin="0,8,0,4" />
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                        <RadioButton Content="Oscuro" IsChecked="{Binding IsDarkMode}" Margin="0,0,16,0" />
-                        <RadioButton Content="Claro" IsChecked="{Binding IsLightMode}" />
-                    </StackPanel>
-
-                    <TextBlock Text="Al iniciar Windows" Margin="0,8,0,4" />
-                    <CheckBox Content="Ejecutar Alarmino automáticamente al iniciar sesión"
-                              IsChecked="{Binding AutoStartEnabled}" />
-
-                    <Border Background="{DynamicResource BrushCardBg}" BorderBrush="{DynamicResource BrushBorder}"
-                            BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,20,0,0">
-                        <StackPanel>
-                            <TextBlock Text="Cómo funciona" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <TextBlock Style="{StaticResource SecondaryText}" TextWrapping="Wrap"
-                                       Text="Las alarmas solo suenan mientras Alarmino está en ejecución (permanece en la bandeja al cerrar la ventana). Para terminar la aplicación usa «Salir» desde el icono de la bandeja." />
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
-            </TabItem>
-        </TabControl>
+                                            </ToggleButton.Style>
+                                        </ToggleButton>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
 
         <!-- Pie -->
         <TextBlock Grid.Row="3" Margin="0,8,0,0" Style="{StaticResource SecondaryText}"

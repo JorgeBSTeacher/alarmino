@@ -92,6 +92,7 @@ public sealed class AudioService : IDisposable
             if (request.Mode == PlaybackMode.CustomDuration && request.CustomDurationSeconds > 0)
             {
                 source = new TruncatedWaveStream(source, TimeSpan.FromSeconds(request.CustomDurationSeconds));
+                source = new FadeOutWaveStream(source, 5);
             }
 
             var output = new WaveOutEvent();

@@ -57,6 +57,11 @@ public static class Program
         bool silent = args.Contains("/S", StringComparer.OrdinalIgnoreCase);
         bool uninstall = args.Contains("/Uninstall", StringComparer.OrdinalIgnoreCase);
 
+        // Copia de sí mismo como desinstalador: si el ejecutable se llama
+        // UninstallAlarmino, el modo correcto es desinstalar aunque no lleve /Uninstall.
+        string ownName = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? string.Empty);
+        uninstall |= ownName.Equals("UninstallAlarmino", StringComparison.OrdinalIgnoreCase);
+
         if (silent)
         {
             string? dir = TryGetArgValue(args, "/D");

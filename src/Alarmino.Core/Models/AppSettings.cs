@@ -20,5 +20,17 @@ public class AppSettings
 
     public bool AutoStartEnabled { get; set; } = true;
 
+    /// <summary>Al autoejecutarse al iniciar sesión, mostrar la ventana (en vez de minimizar a la bandeja).</summary>
+    public bool StartVisibleOnLogin { get; set; }
+
+    public bool NotificationSoundEnabled { get; set; } = true;
+
+    /// <summary>Sonido del botón ALARMA (rojo) de la ventana principal.</summary>
+    public SoundSelection AlarmSound { get; set; } = new()
+    {
+        Kind = SoundSourceKind.Preset,
+        PresetId = "schoolTone",
+    };
+
     public AlarmSortMode SortMode { get; set; } = AlarmSortMode.ByTime;
 }

@@ -22,4 +22,6 @@ public partial class EditorWindow : Window
             DialogResult = true;
         }
     }
+
+    private void OnCancelClick(object sender, RoutedEventArgs e) => DialogResult = false;
 }

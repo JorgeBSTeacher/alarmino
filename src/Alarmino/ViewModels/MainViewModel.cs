@@ -27,6 +27,8 @@ public sealed partial class MainViewModel : ObservableObject
     private int _volumePercent;
     private ThemeMode _theme;
     private bool _autoStart;
+    private bool _startVisible;
+    private bool _notificationSound;
     private AlarmSortMode _sortMode;
 
     public MainViewModel()
@@ -43,7 +45,11 @@ public sealed partial class MainViewModel : ObservableObject
         _volumePercent = _settings.GlobalVolumePercent;
         _theme = _settings.Theme;
         _autoStart = _settings.AutoStartEnabled;
+        _startVisible = _settings.StartVisibleOnLogin;
+        _notificationSound = _settings.NotificationSoundEnabled;
         _sortMode = _settings.SortMode;
+
+        _audio.PlaybackFinished += () => PlaybackFinished?.Invoke();
 
         Alarms = new ObservableCollection<AlarmViewModel>(
             _store.LoadAlarms().Select(a => new AlarmViewModel(a)));
@@ -80,7 +86,13 @@ public sealed partial class MainViewModel : ObservableObject
     public bool MasterEnabled
     {
         get => _masterEnabled;
-        set => SetProperty(ref _masterEnabled, value);
+        set
+        {
+            if (SetProperty(ref _masterEnabled, value))
+            {
+                OnPropertyChanged(nameof(MasterStatusText));
+            }
+        }
     }
 
     public string MasterStatusText => _masterEnabled ? "Todo activado" : "Todo apagado";
@@ -138,6 +150,130 @@ public sealed partial class MainViewModel : ObservableObject
                 _settings.AutoStartEnabled = value;
                 PersistSettings();
             }
+        }
+    }
+
+    public bool NotificationSoundEnabled
+    {
+        get => _notificationSound;
+        set
+        {
+            if (SetProperty(ref _notificationSound, value))
+            {
+                _settings.NotificationSoundEnabled = value;
+                PersistSettings();
+            }
+        }
+    }
+
+    public bool StartVisibleOnLogin
+    {
+        get => _startVisible;
+        set
+        {
+            if (SetProperty(ref _startVisible, value))
+            {
+                _settings.StartVisibleOnLogin = value;
+                if (_autoStart)
+                {
+                    AutostartService.SetEnabled(true, value);
+                }
+
+                PersistSettings();
+            }
+        }
+    }
+
+    // ---------- Sonido del botón ALARMA ----------
+
+    public IReadOnlyList<SoundPreset> AlarmButtonPresets => SoundPresets.All;
+
+    public bool AlarmButtonUsePreset
+    {
+        get => _settings.AlarmSound.Kind == SoundSourceKind.Preset;
+        set
+        {
+            bool current = _settings.AlarmSound.Kind == SoundSourceKind.Preset;
+            if (current != value)
+            {
+                _settings.AlarmSound.Kind = value ? SoundSourceKind.Preset : SoundSourceKind.File;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AlarmButtonUseFile));
+                PersistSettings();
+            }
+        }
+    }
+
+    public bool AlarmButtonUseFile
+    {
+        get => !AlarmButtonUsePreset;
+        set => AlarmButtonUsePreset = !value;
+    }
+
+    public string AlarmButtonPresetId
+    {
+        get => _settings.AlarmSound.PresetId ?? SoundPresets.All[0].Id;
+        set
+        {
+            string id = value ?? SoundPresets.All[0].Id;
+            if (!string.Equals(_settings.AlarmSound.PresetId, id, StringComparison.Ordinal))
+            {
+                _settings.AlarmSound.PresetId = id;
+                OnPropertyChanged();
+                PersistSettings();
+            }
+        }
+    }
+
+    public string AlarmButtonFilePath
+    {
+        get => _settings.AlarmSound.FilePath ?? string.Empty;
+        set
+        {
+            if (!string.Equals(_settings.AlarmSound.FilePath, value, StringComparison.Ordinal))
+            {
+                _settings.AlarmSound.FilePath = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AlarmButtonFilePathDisplay));
+                PersistSettings();
+            }
+        }
+    }
+
+    public string AlarmButtonFilePathDisplay
+        => string.IsNullOrWhiteSpace(_settings.AlarmSound.FilePath)
+            ? "Ningún archivo seleccionado"
+            : System.IO.Path.GetFileName(_settings.AlarmSound.FilePath);
+
+    /// <summary>Reproduce el sonido configurado para ALARMA una sola vez.</summary>
+    [RelayCommand]
+    private void TriggerAlarm()
+    {
+        var request = new PlaybackRequest(
+            _settings.AlarmSound,
+            PlaybackMode.Full,
+            0,
+            1,
+            0,
+            _volumePercent);
+        _audio.Play(request);
+    }
+
+    [RelayCommand]
+    private void BrowseAlarmSound()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Selecciona el sonido de ALARMA",
+            Filter = "Archivos de sonido (*.mp3;*.wav)|*.mp3;*.wav|MP3 (*.mp3)|*.mp3|WAV (*.wav)|*.wav",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            AlarmButtonUseFile = true;
+            AlarmButtonFilePath = dialog.FileName;
         }
     }
 
@@ -214,7 +350,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (_autoStart)
         {
             // Garantiza la entrada de autostart si es la primera ejecución.
-            AutostartService.SetEnabled(true);
+            AutostartService.SetEnabled(true, _startVisible);
         }
 
         _timer.Start();
@@ -235,6 +371,11 @@ public sealed partial class MainViewModel : ObservableObject
     public void PersistAlarms() => _store.SaveAlarms(Alarms.Select(v => v.Model));
 
     public void Preview(PlaybackRequest request) => _audio.Play(request);
+
+    /// <summary>Detiene la previsualización activa desde el editor.</summary>
+    public void StopPreview() => _audio.Stop();
+
+    public event Action? PlaybackFinished;
 
     public void Silence() => _audio.Stop();
 
@@ -283,7 +424,8 @@ public sealed partial class MainViewModel : ObservableObject
                 State = EventState.Missed,
             });
             _tray?.ShowNotification("Alarmino",
-                $"Se omitió la alarma «{missed.Alarm.Name}» de las {missed.Alarm.TimeText}: el equipo estaba apagado.");
+                $"Se omitió la alarma «{missed.Alarm.Name}» de las {missed.Alarm.TimeText}: el equipo estaba apagado.",
+                _notificationSound);
         }
 
         foreach (var alarm in result.ToPlay)
@@ -302,7 +444,7 @@ public sealed partial class MainViewModel : ObservableObject
             State = EventState.Played,
         });
 
-        _tray?.ShowNotification("Alarmino", $"«{alarm.Name}» · {alarm.TimeText}");
+        _tray?.ShowNotification("Alarmino", $"«{alarm.Name}» · {alarm.TimeText}", _notificationSound);
 
         var request = new PlaybackRequest(
             alarm.Sound,

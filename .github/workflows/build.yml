@@ -49,14 +49,16 @@ jobs:
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
             -o artifacts/win-x64
 
-      - name: Instalar Inno Setup
-        shell: pwsh
-        run: choco install innosetup --no-progress -y
-
-      - name: Compilar instalador
-        shell: pwsh
+      - name: Publicar stub del instalador
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\AlarminoSetup.iss
+          dotnet publish tools/Alarmino.Installer/Alarmino.Installer.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o artifacts/installer-stub
+
+      - name: Componer instalador
+        shell: pwsh
+        run: python "${{ github.workspace }}/scripts/compose-installer.py" artifacts/installer-stub/Alarmino.Installer.exe artifacts/win-x64 artifacts/AlarminoSetup.exe
 
       - name: Subir artefactos
         uses: actions/upload-artifact@v4

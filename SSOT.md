@@ -20,7 +20,7 @@
 | Autostart | Clave `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` con arg `/min` | Arranque por usuario sin permisos de administrador |
 | Vuelo/tray | **NotifyIcon** con menú contextual; cerrar = minimizar a bandeja | Sempre activa sin molestar |
 | Instancia única | `Mutex` con nombre global `Global\Alarmino` | Evita procesos duplicados (bandeja única) |
-| Instalador | Inno Setup (`installer\AlarminoSetup.iss`) | Instala en `%LocalAppData%\Alarmino`, crea accesos directos y autostart |
+| Instalador | **Instalador propio** (`tools\Alarmino.Installer`, self-extracting) — Inno Setup opcional en Windows | Instala en `%LocalAppData%\Alarmino`, crea accesos directos, autostart y clave de desinstalación; se compone **sin** requerir Windows: `scripts/package.sh` |
 | Idiomas | Solo **español** | Requisito 2026-09-11 |
 | Tema | Oscuro/claro conmutables | Requisito 2026-09-11 |
 
@@ -87,7 +87,7 @@
 | Calidad | Analizadores Roslyn activos (`EnforceCodeStyleInBuild`), `dotnet format` |
 | Tests | xUnit + Coverlet (cobertura objetiva); CI GitHub Actions (ubuntu + windows) |
 | Diagnóstico | Log a `%APPDATA%\Alarmino\logs\` para scheduler/audio |
-| Empaquetado | Instalador Inno Setup + `.exe` portátil publicado |
+| Empaquetado | Instalador self-extracting stub + `.exe` portátil publicado (`artifacts/AlarminoSetup.exe`) |
 
 ## 5. Arquitectura
 
@@ -107,7 +107,8 @@ src/Alarmino (WPF, net8.0-windows)
 └── Resources/               iconos, estilos, plantillas, temas claro/oscuro
 
 src/Alarmino.Tests (xUnit)   modelos, JsonDataStore, scheduler (reloj falso)
-installer/AlarminoSetup.iss  Inno Setup
+tools/Alarmino.Installer    stub instalador WPF self-extracting (zip adjunto al exe)
+installer/AlarminoSetup.iss Inno Setup (opcional, solo Windows)
 scripts/                     dev, test, debug, build, publish, package,
                              gen-sounds, analyse, smoke-win, bench (ver §7)
 .github/workflows/build.yml  CI ubuntu (build+test+análisis) y windows (publish+instalador)
@@ -122,14 +123,16 @@ scripts/                     dev, test, debug, build, publish, package,
 | Volumen del sistema (muted) | La app usa volumen global 0–100 % sobre el dispositivo por defecto |
 | Dos alarmas a la misma hora | Suenan en cola secuencial (según orden de lista), cada una registrada |
 | Cambio de hora (DST) | Las horas se evalúan sobre reloj local; solo España/college gestionado por Windows |
-| El exe self-contained pesa (~150 MB) | Aceptable; el instalador comprime |
+| El exe self-contained pesa (~150 MB) | Aceptable; el instalador comprime el payload (zip) |
+| Instalador gigante en Linux | Se compone vía Python **sin** Wine/Inno: stub + zip + marcas (formato `SelfExtractor`) |
 | Permisos admin | No requeridos (instalación + autostart por usuario) |
 
 ## 7. Plan de scripts (testear, debuggear, mejorar)
 
 Pendiente de enlazar desde `SSOT_SCRIPTS.md` o sección en README (ver commit de Fase 6):
-`dev.ps1`, `test.ps1`, `debug.ps1`, `build.ps1`, `publish.ps1`, `package.ps1`,
-`gen-sounds.ps1`, `analyse.ps1`, `smoke-win.ps1`, `bench.ps1`, CI GitHub Actions.
+`dev.ps1`, `test.ps1`, `debug.ps1`, `build.ps1`, `publish.ps1`, `package.ps1`/`.sh`,
+`gen-sounds.ps1`, `analyse.ps1`, `smoke-win.ps1`, `bench.ps1`, `compose-installer.py`,
+CI GitHub Actions.
 
 ## 8. Criterios de aceptación (v1)
 

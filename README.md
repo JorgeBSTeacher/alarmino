@@ -22,7 +22,7 @@ Aplicación de escritorio para **Windows 10/11** que programa **sirenas/timbres 
 
 - Windows 10/11 (x64).
 - Para compilar: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (Windows o Linux).
-- Para el instalador: [Inno Setup 6](https://jrsoftware.org/isinfo.php).
+- El instalador se genera con **Python 3** (no requiere Inno Setup ni Windows); Inno Setup sigue disponible como opción.
 
 ## Build y ejecución
 
@@ -38,10 +38,17 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 -R
 
 ## Generar el instalador
 
-```powershell
-scripts\package.ps1       # requiere Inno Setup + publish previo
-# -> artifacts\AlarminoSetup.exe
+```bash
+# Linux (sin Wine/Inno): publica la app y compone el instalador self-extracting
+./scripts/package.sh       # -> artifacts/AlarminoSetup.exe
 ```
+
+```powershell
+# Windows: idéntico (requiere Python 3; opcional -WithInno si tienes Inno Setup)
+scripts\package.ps1        # -> artifacts\AlarminoSetup.exe
+```
+
+El instalador (GUI en español, o silencioso con `/S`) instala en `%LocalAppData%\Alarmino`, crea accesos directos (Inicio/escritorio), autoinicio y su propia entrada de desinstalación (`UninstallAlarmino.exe`).
 
 O mediante CI: el workflow `build.yml` sube el `.exe` y el instalador como artefactos.
 
@@ -54,7 +61,8 @@ O mediante CI: el workflow `build.yml` sube el `.exe` y el instalador como artef
 | `scripts/test.ps1` / `test.sh` | Tests + cobertura (Coverlet/reportgenerator) |
 | `scripts/build.ps1` / `build.sh` | Build Release `win-x64` |
 | `scripts/publish.ps1` / `publish.sh` | Publica `.exe` self-contained single-file |
-| `scripts/package.ps1` | Compila el instalador Inno Setup |
+| `scripts/package.ps1` / `package.sh` | Publica app + stub y compone el instalador (Python 3) |
+| `scripts/compose-installer.py` | Pega `App.exe` (zip) al exe del instalador + marcas |
 | `scripts/analyse.ps1` / `analyse.sh` | `dotnet format` (estilo + analizadores) |
 | `scripts/bench.ps1` / `bench.sh` | Mide rendimiento y latencia del scheduler |
 | `scripts/smoke-win.ps1` | Prueba de humo en Windows (bandeja, autostart, instancia única) |
@@ -67,8 +75,9 @@ O mediante CI: el workflow `build.yml` sube el `.exe` y el instalador como artef
 src/Alarmino          # App WPF (MVVM, CommunityToolkit.Mvvm, NAudio)
 src/Alarmino.Core     # Lógica pura (modelos, scheduler, persistencia) — testeable en Linux
 src/Alarmino.Tests    # xUnit + Coverlet
-tools/Alarmino.Bench  # Bench del scheduler (throughput + latencia)
-installer/            # Script Inno Setup
+tools/Alarmino.Bench     # Bench del scheduler (throughput + latencia)
+tools/Alarmino.Installer # Stub instalador WPF self-extracting
+installer/               # Inno Setup (opcional, solo Windows)
 scripts/              # Plan de scripts (dev/test/debug/build/publish/…)
 .github/workflows     # CI Ubuntu + Windows
 ```

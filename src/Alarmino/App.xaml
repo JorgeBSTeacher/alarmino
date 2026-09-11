@@ -1,0 +1,22 @@
+<Application x:Class="Alarmino.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Alarmino.Converters">
+    <Application.Resources>
+        <ResourceDictionary>
+
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Theme/Dark.xaml" x:Name="ThemeDictionary" />
+                <ResourceDictionary Source="/Theme/Controls.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <local:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
+            <local:EmptyTextToCollapsedConverter x:Key="EmptyTextToCollapsedConverter" />
+            <local:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <local:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibilityConverter" />
+            <local:BoolToBrushConverter x:Key="BoolToBrushConverter" />
+            <local:InverseBoolConverter x:Key="InverseBoolConverter" />
+
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

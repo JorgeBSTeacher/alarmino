@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{DED61CFB-15DA-45B5-9610-ABA768215E9B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Alarmino.Core", "src\Alarmino.Core\Alarmino.Core.csproj", "{CC91CA9A-A8E9-440E-BDDF-13C5A542433D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Alarmino.Tests", "src\Alarmino.Tests\Alarmino.Tests.csproj", "{8A7334A3-E1F9-4C5D-A6DC-6A4293987555}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Alarmino", "src\Alarmino\Alarmino.csproj", "{750F342D-9DC0-4291-84E5-F20B4A448F9F}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{40EC0E71-DBE9-4071-A82B-7BEBDF4D22F8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Alarmino.Bench", "tools\Alarmino.Bench\Alarmino.Bench.csproj", "{9FC2D850-0DA4-4B51-BE5F-343AC704F05A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{CC91CA9A-A8E9-440E-BDDF-13C5A542433D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CC91CA9A-A8E9-440E-BDDF-13C5A542433D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CC91CA9A-A8E9-440E-BDDF-13C5A542433D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CC91CA9A-A8E9-440E-BDDF-13C5A542433D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8A7334A3-E1F9-4C5D-A6DC-6A4293987555}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8A7334A3-E1F9-4C5D-A6DC-6A4293987555}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8A7334A3-E1F9-4C5D-A6DC-6A4293987555}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8A7334A3-E1F9-4C5D-A6DC-6A4293987555}.Release|Any CPU.Build.0 = Release|Any CPU
+		{750F342D-9DC0-4291-84E5-F20B4A448F9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{750F342D-9DC0-4291-84E5-F20B4A448F9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{750F342D-9DC0-4291-84E5-F20B4A448F9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{750F342D-9DC0-4291-84E5-F20B4A448F9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9FC2D850-0DA4-4B51-BE5F-343AC704F05A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9FC2D850-0DA4-4B51-BE5F-343AC704F05A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9FC2D850-0DA4-4B51-BE5F-343AC704F05A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9FC2D850-0DA4-4B51-BE5F-343AC704F05A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{CC91CA9A-A8E9-440E-BDDF-13C5A542433D} = {DED61CFB-15DA-45B5-9610-ABA768215E9B}
+		{8A7334A3-E1F9-4C5D-A6DC-6A4293987555} = {DED61CFB-15DA-45B5-9610-ABA768215E9B}
+		{750F342D-9DC0-4291-84E5-F20B4A448F9F} = {DED61CFB-15DA-45B5-9610-ABA768215E9B}
+		{9FC2D850-0DA4-4B51-BE5F-343AC704F05A} = {40EC0E71-DBE9-4071-A82B-7BEBDF4D22F8}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,21 @@
+# --- .NET ---
+bin/
+obj/
+artifacts/
+*.user
+
+# --- IDE / OS ---
+.vs/
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+*.suo
+*.userprefs
+Thumbs.db
+Desktop.ini
+
+# --- Entorno local ---
+*.log
+logs/
+appsettings.local.json

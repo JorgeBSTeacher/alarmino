@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify-ubuntu:
+    name: Compilar y analizar (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          global-json-file: global.json
+
+      - name: Restaurar
+        run: dotnet restore Alarmino.sln
+
+      - name: Build (debug, cross win-x64)
+        run: dotnet build Alarmino.sln -c Debug --no-restore
+
+      - name: Tests + cobertura
+        run: dotnet test Alarmino.sln --no-build --collect:"XPlat Code Coverage"
+
+      - name: Formato y analizadores
+        run: dotnet format Alarmino.sln --verify-no-changes --no-restore
+
+  package-windows:
+    name: Publish e instalador (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          global-json-file: global.json
+
+      - name: Publicar exe self-contained
+        run: |
+          dotnet publish src/Alarmino/Alarmino.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o artifacts/win-x64
+
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Compilar instalador
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\AlarminoSetup.iss
+
+      - name: Subir artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: Alarmino-win-x64
+          path: |
+            artifacts/win-x64/Alarmino.exe
+            artifacts/AlarminoSetup.exe

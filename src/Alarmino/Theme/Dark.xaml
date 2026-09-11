@@ -1,0 +1,25 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <SolidColorBrush x:Key="BrushWindowBg" Color="#17181C" />
+    <SolidColorBrush x:Key="BrushHeaderBg" Color="#1E2026" />
+    <SolidColorBrush x:Key="BrushCardBg" Color="#22252B" />
+    <SolidColorBrush x:Key="BrushCardHover" Color="#2A2E36" />
+    <SolidColorBrush x:Key="BrushInputBg" Color="#2A2E36" />
+    <SolidColorBrush x:Key="BrushAccent" Color="#2E7CF6" />
+    <SolidColorBrush x:Key="BrushAccentHover" Color="#4B8FF7" />
+    <SolidColorBrush x:Key="BrushTextPrimary" Color="#E8EAF0" />
+    <SolidColorBrush x:Key="BrushTextSecondary" Color="#9AA3B0" />
+    <SolidColorBrush x:Key="BrushBorder" Color="#343944" />
+    <SolidColorBrush x:Key="BrushDanger" Color="#E5484D" />
+    <SolidColorBrush x:Key="BrushDangerHover" Color="#EE6C70" />
+    <SolidColorBrush x:Key="BrushSuccess" Color="#46A758" />
+    <SolidColorBrush x:Key="BrushToggleOn" Color="#2E7CF6" />
+    <SolidColorBrush x:Key="BrushToggleOff" Color="#454B57" />
+    <SolidColorBrush x:Key="BrushChipActive" Color="#2E7CF6" />
+    <SolidColorBrush x:Key="BrushChipActiveText" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="BrushChipInactive" Color="#2A2E36" />
+    <SolidColorBrush x:Key="BrushChipInactiveText" Color="#6B7280" />
+    <SolidColorBrush x:Key="BrushSelection" Color="#16325E" />
+
+</ResourceDictionary>

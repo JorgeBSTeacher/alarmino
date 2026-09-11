@@ -2,7 +2,7 @@
 
 > Documento de referencia única para el desarrollo de **Alarmino**.
 > Cualquier discrepancia entre este documento y el código debe resolverse actualizando uno de los dos (prevalece el código en ejecución, pero se registra aquí el cambio).
-> Última actualización: 2026-09-11 · Versión v0.1.0
+> Última actualización: 2026-09-11 · Versión v0.1.1
 
 ## 1. Visión general
 
@@ -145,3 +145,17 @@ CI GitHub Actions.
 7. Registro de eventos con Tocada/Omitida.
 8. Tema oscuro/claro; volumen global; probar sonido.
 9. `dotnet build` y `dotnet test` en CI pasan.
+
+---
+
+## 9. Mejoras propuestas (pendientes)
+
+1. **Despertar el equipo para saltar las alarmas** con el PC suspendido/hibernado.
+   Vía: timer del sistema (`SetWaitableTimer` con `fResume=TRUE`, P/Invoke sin admin) o
+   Task Scheduler con `WakeToRun`. Opción en Configuración (activada por defecto) que arma
+   el despertador para la próxima alarma. Limitaciones: no despierta un equipo apagado del
+   todo; el plan de energía debe permitir temporizadores de reactivación (en ocasiones solo
+   «importantes») y en algunas máquinas hay que habilitarlo en la BIOS.
+2. **Edición de los sonidos predeterminados** desde Configuración: cambiar el **nombre** del
+   tono personalizado y **elegir el `.mp3`/`.wav`** deseado. Los tonos editados (o añadidos)
+   aparecen en el desplegable de predefinidos del editor de alarmas y en Configuración.

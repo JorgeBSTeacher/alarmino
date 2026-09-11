@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace Alarmino.Services;
+namespace Alarmino.Core.Services;
 
 /// <summary>
 /// Envuelve un <see cref="WaveStream"/> PCM de 16 bits y aplica un desvanecimiento

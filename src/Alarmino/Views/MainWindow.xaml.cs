@@ -31,6 +31,7 @@ public partial class MainWindow : Window
         var editor = new AlarmEditorViewModel(model)
         {
             PreviewVolumePercent = ViewModel.VolumePercent,
+            StoreSound = ViewModel.StoreSoundInLibrary,
         };
         editor.PreviewRequested += OnEditorPreview;
         editor.StopPreviewRequested += OnEditorStopPreview;

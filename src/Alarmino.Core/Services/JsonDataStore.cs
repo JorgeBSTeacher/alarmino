@@ -25,15 +25,48 @@ public sealed class JsonDataStore
 
     public string DataDirectory => _baseDir;
 
+    public SoundLibrary SoundLibrary => new(_baseDir);
+
     private string PathOf(string name) => Path.Combine(_baseDir, name);
 
-    public List<Alarm> LoadAlarms() => Load<List<Alarm>>("alarms.json") ?? [];
+    public List<Alarm> LoadAlarms()
+    {
+        var alarms = Load<List<Alarm>>("alarms.json") ?? [];
+
+        // Migración: los sonidos de archivo que apuntan fuera de la biblioteca
+        // se copian a sounds\ y se actualiza la referencia.
+        var library = SoundLibrary;
+        bool changed = false;
+        foreach (var alarm in alarms)
+        {
+            changed |= library.Normalize(alarm.Sound);
+        }
+
+        if (changed)
+        {
+            SaveAlarms(alarms);
+        }
+
+        return alarms;
+    }
 
     public void SaveAlarms(IEnumerable<Alarm> alarms) => Save("alarms.json", alarms);
 
-    public AppSettings LoadSettings() => Load<AppSettings>("config.json") ?? new AppSettings();
+    public AppSettings LoadSettings()
+    {
+        var settings = Load<AppSettings>("config.json") ?? new AppSettings();
+        if (SoundLibrary.Normalize(settings.AlarmSound))
+        {
+            SaveSettings(settings);
+        }
+
+        return settings;
+    }
 
     public void SaveSettings(AppSettings settings) => Save("config.json", settings);
+
+    /// <summary>Copia un archivo de sonido a la biblioteca y devuelve la ruta guardada.</summary>
+    public string StoreSoundInLibrary(string sourcePath) => SoundLibrary.StoreUserSound(sourcePath);
 
     public List<EventLogEntry> LoadEvents() => Load<List<EventLogEntry>>("events.json") ?? [];
 

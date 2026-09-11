@@ -81,7 +81,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ---------- Propiedades de estado ----------
 
-    public string AppVersion => "Alarmino v0.1.0";
+    public string AppVersion => "Alarmino v0.1.1";
 
     public bool MasterEnabled
     {
@@ -273,9 +273,12 @@ public sealed partial class MainViewModel : ObservableObject
         if (dialog.ShowDialog() == true)
         {
             AlarmButtonUseFile = true;
-            AlarmButtonFilePath = dialog.FileName;
+            AlarmButtonFilePath = StoreSoundInLibrary(dialog.FileName);
         }
     }
+
+    /// <summary>Copia un sonido elegido por el usuario a la biblioteca y devuelve la ruta guardada.</summary>
+    public string StoreSoundInLibrary(string sourcePath) => _store.StoreSoundInLibrary(sourcePath);
 
     public AlarmSortMode SortMode
     {

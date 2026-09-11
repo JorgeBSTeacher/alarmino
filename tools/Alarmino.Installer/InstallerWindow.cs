@@ -13,6 +13,7 @@ public sealed class InstallerWindow : Window
     private CheckBox? _autoStartBox;
     private CheckBox? _desktopBox;
     private CheckBox? _runNowBox;
+    private CheckBox? _deleteDataBox;
     private Button? _actionButton;
 
     public InstallerWindow(string[] args)
@@ -47,8 +48,8 @@ public sealed class InstallerWindow : Window
         var subtitle = new TextBlock
         {
             Text = _uninstallMode
-                ? "Se eliminarán los accesos directos, el autostart y la carpeta de instalación."
-                : "Sirenas del colegio · Windows 10/11 · v0.1.0",
+                ? "Se eliminarán los accesos directos, el autostart y la carpeta de instalación. Tus alarmas y audios personalizados se conservan salvo que marques la opción de abajo."
+                : "Sirenas del colegio · Windows 10/11 · v0.1.1",
             TextWrapping = TextWrapping.Wrap,
             Foreground = SystemColors.GrayTextBrush,
             Margin = new Thickness(0, 0, 0, 14),
@@ -57,6 +58,14 @@ public sealed class InstallerWindow : Window
 
         if (_uninstallMode)
         {
+            _deleteDataBox = new CheckBox
+            {
+                Content = "Eliminar también mis alarmas y audios personalizados",
+                IsChecked = false,
+                Margin = new Thickness(0, 0, 0, 12),
+            };
+            root.Children.Add(_deleteDataBox);
+
             var runButton = new Button
             {
                 Content = "Desinstalar",
@@ -176,7 +185,7 @@ public sealed class InstallerWindow : Window
 
         try
         {
-            InstallerEngine.Uninstall(installed);
+            InstallerEngine.Uninstall(installed, deleteData: _deleteDataBox?.IsChecked == true);
             MessageBox.Show("Alarmino se ha desinstalado.", "Alarmino",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             Close();

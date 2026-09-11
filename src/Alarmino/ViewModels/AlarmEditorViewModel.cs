@@ -142,6 +142,9 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
     /// <summary>Volumen global actual, inyectado por la ventana para el botón Probar.</summary>
     public int PreviewVolumePercent { get; set; } = 80;
 
+    /// <summary>Copia el sonido elegido a la biblioteca; inyectado por la ventana principal.</summary>
+    public Func<string, string>? StoreSound { get; set; }
+
     public event Action<PlaybackRequest>? PreviewRequested;
 
     /// <summary>Solicita detener la previsualización.</summary>
@@ -177,7 +180,7 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
 
         if (dialog.ShowDialog() == true)
         {
-            FilePath = dialog.FileName;
+            FilePath = StoreSound is not null ? StoreSound(dialog.FileName) : dialog.FileName;
         }
     }
 

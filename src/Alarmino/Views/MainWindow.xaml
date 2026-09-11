@@ -5,6 +5,8 @@
         Width="920" Height="660"
         MinWidth="760" MinHeight="520"
         WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource BrushWindowBg}"
+        Foreground="{DynamicResource BrushTextPrimary}"
         Icon="pack://application:,,,/Resources/alarmino.ico">
 
     <Grid Margin="16">

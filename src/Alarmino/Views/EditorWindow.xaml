@@ -6,7 +6,9 @@
         SizeToContent="Height"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
-        ShowInTaskbar="True">
+        ShowInTaskbar="True"
+        Background="{DynamicResource BrushWindowBg}"
+        Foreground="{DynamicResource BrushTextPrimary}">
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

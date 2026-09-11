@@ -5,24 +5,26 @@ using Alarmino.Core.Models;
 namespace Alarmino.Services;
 
 /// <summary>
-/// Cambia el tema (claro/oscuro) en vivo. Inyecta los pinceles del tema activo
-/// directamente en <see cref="Application.Resources"/> para que cualquier
-/// DynamicResource resuelva siempre los colores del tema vigente.
+/// Cambia el tema (claro/oscuro) en vivo con doble mecanismo:
+/// 1) Reemplaza el diccionario de tema en las MergedDictionaries (App.xaml).
+/// 2) Re-publica los pinceles en <see cref="Application.Resources"/>.
+/// Así cualquier DynamicResource resuelve siempre los colores del tema vigente.
 /// </summary>
 public sealed class ThemeService
 {
     public void Apply(ThemeMode mode)
     {
         var app = Application.Current;
-        string source = $"Theme/{(mode == ThemeMode.Dark ? "Dark" : "Light")}.xaml";
+        string themeName = mode == ThemeMode.Dark ? "Dark" : "Light";
 
         var dictionary = new ResourceDictionary
         {
-            Source = new Uri(source, UriKind.Relative),
+            Source = new Uri($"Theme/{themeName}.xaml", UriKind.Relative),
         };
 
-        // 1) Quita diccionarios de tema antiguos de la cadena mergeada (App.xaml).
+        // 1) Cambia el diccionario de tema en la cadena mergeada (App.xaml).
         var merged = app.Resources.MergedDictionaries;
+        int existing = -1;
         for (int i = merged.Count - 1; i >= 0; i--)
         {
             var d = merged[i];
@@ -35,13 +37,23 @@ public sealed class ThemeService
             if (s.EndsWith("/Dark.xaml", StringComparison.Ordinal) ||
                 s.EndsWith("/Light.xaml", StringComparison.Ordinal))
             {
-                merged.RemoveAt(i);
+                existing = i;
+                break;
             }
         }
 
-        // 2) Publica los pinceles en Resources: máxima precedencia y actualización
-        //    fiable de DynamicResource (evita texto «pegado» al tema anterior).
-        foreach (DictionaryEntry entry in dictionary)
+        if (existing >= 0)
+        {
+            merged[existing] = dictionary;
+        }
+        else
+        {
+            merged.Insert(0, dictionary);
+        }
+
+        // 2) Re-publica los pinceles en Resources: máxima precedencia y
+        //    actualización fiable de DynamicResource.
+        foreach (System.Collections.DictionaryEntry entry in dictionary)
         {
             if (entry.Key is string key)
             {

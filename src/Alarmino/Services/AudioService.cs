@@ -12,8 +12,14 @@ namespace Alarmino.Services;
 public sealed class AudioService : IDisposable
 {
     private readonly object _gate = new();
+    private readonly SoundLibrary _library;
     private WaveOutEvent? _current;
     private CancellationTokenSource? _cts;
+
+    public AudioService(SoundLibrary? library = null)
+    {
+        _library = library ?? new SoundLibrary();
+    }
 
     public bool IsPlaying { get; private set; }
 
@@ -85,9 +91,13 @@ public sealed class AudioService : IDisposable
     {
         try
         {
-            WaveStream source = request.Sound.Kind == SoundSourceKind.Preset
-                ? PresetSynthesizer.Create(request.Sound.PresetId ?? "bell")
-                : OpenFile(request.Sound.FilePath);
+            WaveStream source = request.Sound.Kind switch
+            {
+                SoundSourceKind.Preset => _library.ResolvePresetFile(request.Sound.PresetId) is { } file
+                    ? OpenFile(file)
+                    : PresetSynthesizer.Create(request.Sound.PresetId ?? "bell"),
+                _ => OpenFile(request.Sound.FilePath),
+            };
 
             if (request.Mode == PlaybackMode.CustomDuration && request.CustomDurationSeconds > 0)
             {

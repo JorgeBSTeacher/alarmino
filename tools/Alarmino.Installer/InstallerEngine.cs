@@ -33,7 +33,8 @@ public static class InstallerEngine
         File.Copy(Environment.ProcessPath!, Path.Combine(targetDir, "UninstallAlarmino.exe"), overwrite: true);
     }
 
-    public static void Uninstall(string installDir)
+    /// <param name="deleteData">Si es true, borra también %APPDATA%\Alarmino (alarmas, configuración y audios).</param>
+    public static void Uninstall(string installDir, bool deleteData = false)
     {
         ShortcutHelper.RemoveShortcuts();
         ShortcutHelper.RemoveAutoStartIfPointsTo(installDir);
@@ -52,6 +53,25 @@ public static class InstallerEngine
 
         using (Process.Start(psi))
         {
+        }
+
+        if (deleteData)
+        {
+            // Datos de la app fuera de la carpeta de instalación.
+            string dataDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Alarmino");
+            try
+            {
+                if (Directory.Exists(dataDir))
+                {
+                    Directory.Delete(dataDir, recursive: true);
+                }
+            }
+            catch
+            {
+                // Si Alarmino sigue en ejecución, el borrado se intenta en el
+                // siguiente reinicio manual (no bloqueamos la desinstalación).
+            }
         }
     }
 

@@ -9,7 +9,7 @@
     <SolidColorBrush x:Key="BrushAccent" Color="#2563EB" />
     <SolidColorBrush x:Key="BrushAccentHover" Color="#3B74EA" />
     <SolidColorBrush x:Key="BrushTextPrimary" Color="#1A1D24" />
-    <SolidColorBrush x:Key="BrushTextSecondary" Color="#5C6470" />
+    <SolidColorBrush x:Key="BrushTextSecondary" Color="#3A414D" />
     <SolidColorBrush x:Key="BrushBorder" Color="#D7DBE1" />
     <SolidColorBrush x:Key="BrushDanger" Color="#DC2626" />
     <SolidColorBrush x:Key="BrushDangerHover" Color="#EF4444" />

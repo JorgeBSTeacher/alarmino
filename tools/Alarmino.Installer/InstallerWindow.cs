@@ -16,9 +16,14 @@ public sealed class InstallerWindow : Window
     private CheckBox? _deleteDataBox;
     private Button? _actionButton;
 
-    public InstallerWindow(string[] args)
+    /// <param name="uninstallMode">
+    /// Si viene de <see cref="Program"/> (que también detecta el nombre del ejecutable
+    /// «UninstallAlarmino»), se respeta su decisión en lugar de fiarse solo del argumento.
+    /// </param>
+    public InstallerWindow(string[] args, bool? uninstallMode = null)
     {
-        _uninstallMode = args.Any(a => a.Equals("/Uninstall", StringComparison.OrdinalIgnoreCase));
+        _uninstallMode = uninstallMode ??
+            args.Any(a => a.Equals("/Uninstall", StringComparison.OrdinalIgnoreCase));
 
         Title = "Alarmino — Instalador";
         Width = 470;

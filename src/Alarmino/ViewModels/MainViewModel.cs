@@ -426,9 +426,11 @@ public sealed partial class MainViewModel : ObservableObject
                 AlarmName = missed.Alarm.Name,
                 State = EventState.Missed,
             });
-            _tray?.ShowNotification("Alarmino",
-                $"Se omitió la alarma «{missed.Alarm.Name}» de las {missed.Alarm.TimeText}: el equipo estaba apagado.",
-                _notificationSound);
+            if (_notificationSound)
+            {
+                _tray?.ShowNotification("Alarmino",
+                    $"Se omitió la alarma «{missed.Alarm.Name}» de las {missed.Alarm.TimeText}: el equipo estaba apagado.");
+            }
         }
 
         foreach (var alarm in result.ToPlay)
@@ -447,7 +449,10 @@ public sealed partial class MainViewModel : ObservableObject
             State = EventState.Played,
         });
 
-        _tray?.ShowNotification("Alarmino", $"«{alarm.Name}» · {alarm.TimeText}", _notificationSound);
+        if (_notificationSound)
+        {
+            _tray?.ShowNotification("Alarmino", $"«{alarm.Name}» · {alarm.TimeText}");
+        }
 
         var request = new PlaybackRequest(
             alarm.Sound,

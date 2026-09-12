@@ -59,7 +59,7 @@
         <StackPanel Grid.Row="3" Grid.Column="1" Margin="0,0,0,10">
             <CheckBox IsChecked="{Binding NotificationSoundEnabled}">
                 <CheckBox.Content>
-                    <TextBlock Text="Sonido de aviso de Windows al saltar una alarma" TextWrapping="Wrap" />
+                    <TextBlock Text="Mostrar notificaciones de Windows al saltar una alarma" TextWrapping="Wrap" />
                 </CheckBox.Content>
             </CheckBox>
         </StackPanel>

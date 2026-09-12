@@ -101,7 +101,7 @@ public static class ShortcutHelper
 
         string exe = Path.Combine(installDir, "Alarmino.exe");
         key.SetValue("DisplayName", "Alarmino");
-        key.SetValue("DisplayVersion", "0.1.0");
+        key.SetValue("DisplayVersion", "0.1.1");
         key.SetValue("DisplayIcon", exe);
         key.SetValue("Publisher", "JorgeBSTeacher");
         key.SetValue("InstallLocation", installDir);

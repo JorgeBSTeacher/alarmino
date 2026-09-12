@@ -82,7 +82,7 @@ public static class Program
             return 0;
         }
 
-        var window = new InstallerWindow(args);
+        var window = new InstallerWindow(args, uninstallMode: uninstall);
         app.Run(window);
         return 0;
     }

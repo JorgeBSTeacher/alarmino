@@ -41,10 +41,9 @@ public sealed class TrayIconService : IDisposable
 
     public NotifyIcon NotifyIcon => _icon;
 
-    public void ShowNotification(string title, string text, bool playSound)
+    public void ShowNotification(string title, string text)
     {
-        ToolTipIcon icon = playSound ? ToolTipIcon.Info : ToolTipIcon.None;
-        _icon.ShowBalloonTip(3000, title, text, icon);
+        _icon.ShowBalloonTip(3000, title, text, ToolTipIcon.Info);
     }
 
     private static Icon LoadIcon()

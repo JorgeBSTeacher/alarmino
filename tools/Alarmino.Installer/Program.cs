@@ -23,21 +23,44 @@ public static class Program
             return 0;
         }
 
-        // Modo ayudante: borra la carpeta de instalación y se autodeleimina.
+        // Modo ayudante: espera a que el desinstalador termine, borra la carpeta de
+        // instalación (con reintentos por ficheros en vías de desbloqueo) y se autodeleimina.
         string? deleteDir = TryGetArgValue(args, "--delete-dir");
         if (deleteDir is not null)
         {
-            Thread.Sleep(900);
-            try
+            if (int.TryParse(TryGetArgValue(args, "--wait"), out int parentPid))
             {
-                if (Directory.Exists(deleteDir))
+                try
                 {
-                    Directory.Delete(deleteDir, recursive: true);
+                    Process.GetProcessById(parentPid).WaitForExit(30_000);
+                }
+                catch
+                {
+                    // El proceso padre ya no existe: se puede borrar directamente.
                 }
             }
-            catch
+
+            Thread.Sleep(400);
+            for (int attempt = 0; attempt < 6; attempt++)
             {
-                // Si algo sigue en uso, se borra en el próximo reinicio.
+                try
+                {
+                    if (Directory.Exists(deleteDir))
+                    {
+                        Directory.Delete(deleteDir, recursive: true);
+                    }
+
+                    break;
+                }
+                catch
+                {
+                    if (attempt == 5)
+                    {
+                        break;
+                    }
+
+                    Thread.Sleep(800);
+                }
             }
 
             try
@@ -89,11 +112,18 @@ public static class Program
 
     private static string? TryGetArgValue(string[] args, string key)
     {
-        foreach (var arg in args)
+        for (int i = 0; i < args.Length; i++)
         {
-            if (arg.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
+            // --key=value format
+            if (args[i].StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
             {
-                return arg[(key.Length + 1)..].Trim('"');
+                return args[i][(key.Length + 1)..].Trim('"');
+            }
+
+            // --key value format (space-separated)
+            if (string.Equals(args[i], key, StringComparison.OrdinalIgnoreCase))
+            {
+                return (i + 1 < args.Length) ? args[i + 1] : null;
             }
         }
 

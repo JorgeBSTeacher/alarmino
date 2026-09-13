@@ -54,7 +54,7 @@ public sealed class InstallerWindow : Window
         {
             Text = _uninstallMode
                 ? "Se eliminarán los accesos directos, el autostart y la carpeta de instalación. Tus alarmas y audios personalizados se conservan salvo que marques la opción de abajo."
-                : "Sirenas del colegio · Windows 10/11 · v0.1.1",
+                : "Sirenas del colegio · Windows 10/11 · v0.1.2",
             TextWrapping = TextWrapping.Wrap,
             Foreground = SystemColors.GrayTextBrush,
             Margin = new Thickness(0, 0, 0, 14),
@@ -159,14 +159,16 @@ public sealed class InstallerWindow : Window
                 autoStart: _autoStartBox?.IsChecked == true,
                 desktopShortcut: _desktopBox?.IsChecked == true);
 
+            MessageBox.Show($"Alarmino se instaló correctamente en:\n{target}",
+                "Alarmino", MessageBoxButton.OK, MessageBoxImage.Information);
+
+            // Se lanza la app solo después de cerrar el cuadro de "se instaló correctamente".
             string runPath = Path.Combine(target, "Alarmino.exe");
             if (_runNowBox?.IsChecked == true && File.Exists(runPath))
             {
                 Process.Start(new ProcessStartInfo(runPath) { UseShellExecute = true });
             }
 
-            MessageBox.Show($"Alarmino se instaló correctamente en:\n{target}",
-                "Alarmino", MessageBoxButton.OK, MessageBoxImage.Information);
             Close();
         }
         catch (Exception ex)

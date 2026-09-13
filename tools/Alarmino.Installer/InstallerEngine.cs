@@ -40,12 +40,17 @@ public static class InstallerEngine
         ShortcutHelper.RemoveAutoStartIfPointsTo(installDir);
         ShortcutHelper.RemoveUninstallEntry();
 
+        // Si la aplicación está en ejecución nadie podrá borrar su carpeta y un
+        // reinicio posterior podría dejar el instalador "reapareciendo". Se cierra.
+        KillAlarminoProcesses(installDir);
+
         // Un instalador no puede borrarse a sí mismo (fichero en uso):
-        // se copia a temp, se arranca y termina; el ayudante borra la carpeta.
+        // se copia a temp, se arranca un ayudante que espera a que este proceso
+        // termine y después elimina la carpeta ya sin ficheros bloqueados.
         string helper = Path.Combine(Path.GetTempPath(), "AlarminoUninstallHelper.exe");
         File.Copy(Environment.ProcessPath!, helper, overwrite: true);
 
-        var psi = new ProcessStartInfo(helper, $"--delete-dir \"{installDir}\"")
+        var psi = new ProcessStartInfo(helper, $"--delete-dir \"{installDir}\" --wait={Environment.ProcessId}")
         {
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -72,6 +77,33 @@ public static class InstallerEngine
                 // Si Alarmino sigue en ejecución, el borrado se intenta en el
                 // siguiente reinicio manual (no bloqueamos la desinstalación).
             }
+        }
+    }
+
+    private static void KillAlarminoProcesses(string installDir)
+    {
+        try
+        {
+            foreach (var proc in Process.GetProcessesByName("Alarmino"))
+            {
+                try
+                {
+                    if (proc.MainModule?.FileName is string fileName &&
+                        fileName.StartsWith(Path.GetFullPath(installDir), StringComparison.OrdinalIgnoreCase))
+                    {
+                        proc.Kill(entireProcessTree: false);
+                        proc.WaitForExit(5000);
+                    }
+                }
+                catch
+                {
+                    // El proceso pudo terminar justo antes de inspeccionarse.
+                }
+            }
+        }
+        catch
+        {
+            // Sin permisos o enumeración fallida: no bloqueamos la desinstalación.
         }
     }
 

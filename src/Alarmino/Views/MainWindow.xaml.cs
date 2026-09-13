@@ -28,7 +28,7 @@ public partial class MainWindow : Window
     private void OnEditRequested(AlarmViewModel? existing)
     {
         Alarm model = existing?.Model ?? new Alarm();
-        var editor = new AlarmEditorViewModel(model)
+        var editor = new AlarmEditorViewModel(model, ViewModel.AlarmButtonPresets)
         {
             PreviewVolumePercent = ViewModel.VolumePercent,
             StoreSound = ViewModel.StoreSoundInLibrary,

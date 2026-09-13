@@ -12,7 +12,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Product>Alarmino</Product>
     <ApplicationIcon>Resources\alarmino.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

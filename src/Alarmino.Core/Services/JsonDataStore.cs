@@ -55,7 +55,13 @@ public sealed class JsonDataStore
     public AppSettings LoadSettings()
     {
         var settings = Load<AppSettings>("config.json") ?? new AppSettings();
-        if (SoundLibrary.Normalize(settings.AlarmSound))
+        bool changed = SoundLibrary.Normalize(settings.AlarmSound);
+        if (SoundLibrary.Normalize(settings.RainSound))
+        {
+            changed = true;
+        }
+
+        if (changed)
         {
             SaveSettings(settings);
         }

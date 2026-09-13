@@ -30,26 +30,45 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _startVisible;
     private bool _notificationSound;
     private AlarmSortMode _sortMode;
+    private int _alarmRepeatCount;
+    private int _alarmPauseSeconds;
+    private int _rainRepeatCount;
+    private bool _isAlarmBlinkOn;
+    private bool _isRainBlinkOn;
+    private bool _blinkIsAlarm;
+    private DispatcherTimer? _blinkTimer;
+    private string? _activeSoundLabel;
 
     public MainViewModel()
     {
         _store = new JsonDataStore();
-        _audio = new AudioService();
+        _settings = _store.LoadSettings();
+        _audio = new AudioService(resolvePresetFile: id => SoundPresets.ResolveFilePath(id, _settings.PresetOverrides));
         _evaluator = new SchedulerEvaluator();
         _themes = new ThemeService();
         _dispatcher = Dispatcher.CurrentDispatcher;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _timer.Tick += OnTick;
-
-        _settings = _store.LoadSettings();
         _volumePercent = _settings.GlobalVolumePercent;
         _theme = _settings.Theme;
         _autoStart = _settings.AutoStartEnabled;
         _startVisible = _settings.StartVisibleOnLogin;
         _notificationSound = _settings.NotificationSoundEnabled;
         _sortMode = _settings.SortMode;
+        _alarmRepeatCount = _settings.AlarmRepeatCount;
+        _alarmPauseSeconds = _settings.AlarmPauseSeconds;
+        _rainRepeatCount = _settings.RainRepeatCount;
 
-        _audio.PlaybackFinished += () => PlaybackFinished?.Invoke();
+        _audio.PlaybackFinished += () =>
+        {
+            _dispatcher.InvokeAsync(() =>
+            {
+                _activeSoundLabel = null;
+                StopBlink();
+                PlaybackFinished?.Invoke();
+                NotifyPlaybackState();
+            });
+        };
 
         Alarms = new ObservableCollection<AlarmViewModel>(
             _store.LoadAlarms().Select(a => new AlarmViewModel(a)));
@@ -60,6 +79,13 @@ public sealed partial class MainViewModel : ObservableObject
         {
             vm.PropertyChanged += OnAlarmPropertyChanged;
         }
+
+        PresetEdits = new ObservableCollection<PresetEditViewModel>(
+            SoundPresets.All.Select(builtin =>
+            {
+                var existing = _settings.PresetOverrides.FirstOrDefault(o => o.PresetId == builtin.Id);
+                return new PresetEditViewModel(builtin, existing, SavePresetEdits, StoreSoundInLibrary);
+            }));
     }
 
     // ---------- Colecciones ----------
@@ -69,6 +95,8 @@ public sealed partial class MainViewModel : ObservableObject
     public ListCollectionView AlarmsView { get; }
 
     public ObservableCollection<EventLogEntry> Events { get; }
+
+    public ObservableCollection<PresetEditViewModel> PresetEdits { get; }
 
     public bool HasAlarms => Alarms.Count > 0;
 
@@ -81,7 +109,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ---------- Propiedades de estado ----------
 
-    public string AppVersion => "Alarmino v0.1.1";
+    public string AppVersion => "Alarmino v0.1.2";
 
     public bool MasterEnabled
     {
@@ -186,7 +214,35 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ---------- Sonido del botón ALARMA ----------
 
-    public IReadOnlyList<SoundPreset> AlarmButtonPresets => SoundPresets.All;
+    public IReadOnlyList<SoundPreset> AlarmButtonPresets => SoundPresets.GetAll(_settings.PresetOverrides);
+
+    public int AlarmRepeatCount
+    {
+        get => _alarmRepeatCount;
+        set
+        {
+            value = Math.Clamp(value, 1, 20);
+            if (SetProperty(ref _alarmRepeatCount, value))
+            {
+                _settings.AlarmRepeatCount = value;
+                PersistSettings();
+            }
+        }
+    }
+
+    public int AlarmPauseSeconds
+    {
+        get => _alarmPauseSeconds;
+        set
+        {
+            value = Math.Clamp(value, 0, 300);
+            if (SetProperty(ref _alarmPauseSeconds, value))
+            {
+                _settings.AlarmPauseSeconds = value;
+                PersistSettings();
+            }
+        }
+    }
 
     public bool AlarmButtonUsePreset
     {
@@ -245,18 +301,21 @@ public sealed partial class MainViewModel : ObservableObject
             ? "Ningún archivo seleccionado"
             : System.IO.Path.GetFileName(_settings.AlarmSound.FilePath);
 
-    /// <summary>Reproduce el sonido configurado para ALARMA una sola vez.</summary>
+    /// <summary>Reproduce el sonido configurado para ALARMA con el número de repeticiones elegido.</summary>
     [RelayCommand]
     private void TriggerAlarm()
     {
+        _activeSoundLabel = "el botón ALARMA";
+        StartBlink(alarm: true);
         var request = new PlaybackRequest(
             _settings.AlarmSound,
             PlaybackMode.Full,
             0,
-            1,
-            0,
+            _alarmRepeatCount,
+            _alarmPauseSeconds,
             _volumePercent);
         _audio.Play(request);
+        NotifyPlaybackState();
     }
 
     [RelayCommand]
@@ -279,6 +338,215 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>Copia un sonido elegido por el usuario a la biblioteca y devuelve la ruta guardada.</summary>
     public string StoreSoundInLibrary(string sourcePath) => _store.StoreSoundInLibrary(sourcePath);
+
+    // ---------- Parpadeo de los botones ALARMA / LLUVIA ----------
+
+    public bool IsAlarmBlinkOn
+    {
+        get => _isAlarmBlinkOn;
+        private set => SetProperty(ref _isAlarmBlinkOn, value);
+    }
+
+    public bool IsRainBlinkOn
+    {
+        get => _isRainBlinkOn;
+        private set => SetProperty(ref _isRainBlinkOn, value);
+    }
+
+    /// <summary>El botón deja de parpadear al terminar la reproducción.</summary>
+    public bool IsSoundPlaying => _audio.IsPlaying;
+
+    private void StartBlink(bool alarm)
+    {
+        StopBlink();
+        _blinkIsAlarm = alarm;
+        _blinkTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _blinkTimer.Tick -= OnBlinkTick;
+        _blinkTimer.Tick += OnBlinkTick;
+        SetBlinkOn(true);
+        _blinkTimer.Start();
+    }
+
+    private void StopBlink()
+    {
+        _blinkTimer?.Stop();
+        IsAlarmBlinkOn = false;
+        IsRainBlinkOn = false;
+    }
+
+    private void SetBlinkOn(bool on)
+    {
+        if (_blinkIsAlarm)
+        {
+            IsAlarmBlinkOn = on;
+        }
+        else
+        {
+            IsRainBlinkOn = on;
+        }
+    }
+
+    private void OnBlinkTick(object? sender, EventArgs e)
+    {
+        if (!_audio.IsPlaying)
+        {
+            StopBlink();
+            return;
+        }
+
+        SetBlinkOn(!(_blinkIsAlarm ? _isAlarmBlinkOn : _isRainBlinkOn));
+    }
+
+    private void NotifyPlaybackState() => OnPropertyChanged(nameof(IsSoundPlaying));
+
+    /// <summary>Detiene la reproducción actual (ALARMA, LLUVIA o alarma programada) con confirmación.</summary>
+    [RelayCommand]
+    private void StopSound()
+    {
+        if (!_audio.IsPlaying)
+        {
+            return;
+        }
+
+        string name = _activeSoundLabel ?? "el sonido en reproducción";
+        if (MessageBox.Show($"¿Seguro que quieres parar {name}?", "Alarmino",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        _audio.Stop();
+        _activeSoundLabel = null;
+        StopBlink();
+        NotifyPlaybackState();
+    }
+
+    /// <summary>Guarda los cambios sobre los presets y refresca los desplegables.</summary>
+    private void SavePresetEdits()
+    {
+        _settings.PresetOverrides = PresetEdits
+            .Where(e => e.HasOverride)
+            .Select(e => new PresetOverride
+            {
+                PresetId = e.PresetId,
+                DisplayName = e.DisplayName,
+                FilePath = e.FilePath,
+            })
+            .ToList();
+        PersistSettings();
+        OnPropertyChanged(nameof(AlarmButtonPresets));
+        OnPropertyChanged(nameof(RainButtonPresets));
+    }
+
+    // ---------- Sonido del botón LLUVIA ----------
+
+    public IReadOnlyList<SoundPreset> RainButtonPresets => SoundPresets.GetAll(_settings.PresetOverrides);
+
+    public bool RainButtonUsePreset
+    {
+        get => _settings.RainSound.Kind == SoundSourceKind.Preset;
+        set
+        {
+            bool current = _settings.RainSound.Kind == SoundSourceKind.Preset;
+            if (current != value)
+            {
+                _settings.RainSound.Kind = value ? SoundSourceKind.Preset : SoundSourceKind.File;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RainButtonUseFile));
+                PersistSettings();
+            }
+        }
+    }
+
+    public bool RainButtonUseFile
+    {
+        get => !RainButtonUsePreset;
+        set => RainButtonUsePreset = !value;
+    }
+
+    public string RainButtonPresetId
+    {
+        get => _settings.RainSound.PresetId ?? SoundPresets.All[0].Id;
+        set
+        {
+            string id = value ?? SoundPresets.All[0].Id;
+            if (!string.Equals(_settings.RainSound.PresetId, id, StringComparison.Ordinal))
+            {
+                _settings.RainSound.PresetId = id;
+                OnPropertyChanged();
+                PersistSettings();
+            }
+        }
+    }
+
+    public string RainButtonFilePath
+    {
+        get => _settings.RainSound.FilePath ?? string.Empty;
+        set
+        {
+            if (!string.Equals(_settings.RainSound.FilePath, value, StringComparison.Ordinal))
+            {
+                _settings.RainSound.FilePath = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RainButtonFilePathDisplay));
+                PersistSettings();
+            }
+        }
+    }
+
+    public string RainButtonFilePathDisplay
+        => string.IsNullOrWhiteSpace(_settings.RainSound.FilePath)
+            ? "Ningún archivo seleccionado"
+            : System.IO.Path.GetFileName(_settings.RainSound.FilePath);
+
+    public int RainRepeatCount
+    {
+        get => _rainRepeatCount;
+        set
+        {
+            value = Math.Clamp(value, 1, 20);
+            if (SetProperty(ref _rainRepeatCount, value))
+            {
+                _settings.RainRepeatCount = value;
+                PersistSettings();
+            }
+        }
+    }
+
+    /// <summary>Reproduce el sonido de lluvia de la ventana principal.</summary>
+    [RelayCommand]
+    private void TriggerRain()
+    {
+        _activeSoundLabel = "el botón LLUVIA";
+        StartBlink(alarm: false);
+        var request = new PlaybackRequest(
+            _settings.RainSound,
+            PlaybackMode.Full,
+            0,
+            _rainRepeatCount,
+            1,
+            _volumePercent);
+        _audio.Play(request);
+        NotifyPlaybackState();
+    }
+
+    [RelayCommand]
+    private void BrowseRainSound()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Selecciona el sonido de LLUVIA",
+            Filter = "Archivos de sonido (*.mp3;*.wav)|*.mp3;*.wav|MP3 (*.mp3)|*.mp3|WAV (*.wav)|*.wav",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            RainButtonUseFile = true;
+            RainButtonFilePath = StoreSoundInLibrary(dialog.FileName);
+        }
+    }
 
     public AlarmSortMode SortMode
     {
@@ -380,7 +648,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     public event Action? PlaybackFinished;
 
-    public void Silence() => _audio.Stop();
+    public void Silence()
+    {
+        _audio.Stop();
+        _activeSoundLabel = null;
+        StopBlink();
+        NotifyPlaybackState();
+    }
 
     public void ShowMainWindow()
     {
@@ -441,6 +715,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void PlayAlarm(Alarm alarm)
     {
+        _activeSoundLabel = $"la alarma «{alarm.Name}»";
         AddEvent(new EventLogEntry
         {
             UtcTime = DateTime.UtcNow,
@@ -463,6 +738,7 @@ public sealed partial class MainViewModel : ObservableObject
             _volumePercent);
 
         _audio.Play(request);
+        NotifyPlaybackState();
     }
 
     // ---------- Persistencia auxiliar ----------

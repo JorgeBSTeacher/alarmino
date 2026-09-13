@@ -118,3 +118,59 @@ public class JsonDataStoreTests
         }
     }
 }
+
+public class SoundPresetsTests
+{
+    [Fact]
+    public void GetAll_returns_builtins_when_no_overrides()
+    {
+        Assert.Equal(SoundPresets.All, SoundPresets.GetAll(null));
+        Assert.Equal(SoundPresets.All, SoundPresets.GetAll([]));
+    }
+
+    [Fact]
+    public void GetAll_applies_custom_display_names()
+    {
+        var overrides = new List<PresetOverride>
+        {
+            new() { PresetId = "bell", DisplayName = "Campanón" },
+            new() { PresetId = "schoolTone", DisplayName = "Tono suave", FilePath = @"C:\x\tono.mp3" },
+        };
+
+        var result = SoundPresets.GetAll(overrides);
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal("Campanón", result[0].DisplayName);
+        Assert.Equal("Timbre", result[1].DisplayName); // sin cambios
+        Assert.Equal("Tono suave", result[2].DisplayName);
+        Assert.Equal("bell", result[0].Id);
+    }
+
+    [Fact]
+    public void ResolveFilePath_returns_file_for_overridden_preset()
+    {
+        var overrides = new List<PresetOverride>
+        {
+            new() { PresetId = "bell", DisplayName = "Campana", FilePath = @"C:\x\campana.mp3" },
+            new() { PresetId = "ring", DisplayName = "Timbre" },
+        };
+
+        Assert.Equal(@"C:\x\campana.mp3", SoundPresets.ResolveFilePath("bell", overrides));
+        Assert.Null(SoundPresets.ResolveFilePath("ring", overrides));  // solo nombre, sin archivo
+        Assert.Null(SoundPresets.ResolveFilePath("schoolTone", overrides));
+        Assert.Null(SoundPresets.ResolveFilePath(null, overrides));
+    }
+
+    [Fact]
+    public void AppSettings_defaults_include_three_repeats_and_rain_sound()
+    {
+        var settings = new AppSettings();
+
+        Assert.Equal(3, settings.AlarmRepeatCount);
+        Assert.Equal(1, settings.AlarmPauseSeconds);
+        Assert.Equal(SoundSourceKind.Preset, settings.RainSound.Kind);
+        Assert.NotNull(settings.RainSound.PresetId);
+        Assert.Equal(1, settings.RainRepeatCount);
+        Assert.Empty(settings.PresetOverrides);
+    }
+}

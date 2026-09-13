@@ -26,9 +26,10 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
     private string _errorMessage = string.Empty;
     private bool _isPreviewing;
 
-    public AlarmEditorViewModel(Alarm alarm)
+    public AlarmEditorViewModel(Alarm alarm, IReadOnlyList<SoundPreset>? presets = null)
     {
         Alarm = alarm;
+        Presets = presets ?? SoundPresets.All;
 
         Name = alarm.Name;
         TimeText = alarm.Time.ToString(@"hh\:mm");
@@ -51,7 +52,7 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
 
     public Alarm Alarm { get; }
 
-    public IReadOnlyList<SoundPreset> Presets => SoundPresets.All;
+    public IReadOnlyList<SoundPreset> Presets { get; }
 
     public string ErrorMessage
     {

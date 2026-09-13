@@ -2,7 +2,7 @@
 
 > Documento de referencia única para el desarrollo de **Alarmino**.
 > Cualquier discrepancia entre este documento y el código debe resolverse actualizando uno de los dos (prevalece el código en ejecución, pero se registra aquí el cambio).
-> Última actualización: 2026-09-11 · Versión v0.1.1
+> Última actualización: 2026-09-13 · Versión v0.1.2
 
 ## 1. Visión general
 
@@ -64,6 +64,13 @@
 - **Autostart** activado/desactivado.
 - Criterio de ordenación de la lista (hora / día).
 - Idioma (solo español por ahora).
+- **Botón ALARMA (rojo)** de la ventana principal: sonido (preset o archivo), **número de repeticiones** seguidas (por defecto 3) y **pausa entre toques** (por defecto 1 s). Las repeticiones se **concatenan** (audio completo → pausa → siguiente). Mientras suena, el botón **parpadea rojo/negro** (texto siempre visible).
+- **Botón LLUVIA** de la ventana principal (acceso rápido al sonido de lluvia del patio): sonido configurable igual que ALARMA (preset o archivo), con **número de repeticiones** propio (por defecto 1). Ocupa la columna derecha de la cabecera junto a ALARMA. También **parpadea** mientras suena.
+- **Botón PARAR ALARMA** (centro de la ventana, visible solo mientras hay reproducción): detiene ALARMA, LLUVIA o la alarma programada en curso, previa confirmación que muestra el **nombre** de lo que se va a parar («la alarma “Recreo”», «el botón LLUVIA», …).
+- **Editar presets**: desde Configuración se puede **renombrar** cada sonido predeterminado y/o **asignarle un `.mp3`/`.wav`** que lo sustituya (el audio se copia a la biblioteca de sonidos). Los cambios se reflejan en todos los desplegables. «Restablecer» vuelve al sonido sintetizado y al nombre original.
+- **Configuración por pestañas**: General, ALARMA general, Botón de lluvia, Sonidos predeterminados.
+- **Estilo ComboBox**: en tema oscuro el desplegable usa el mismo fondo y color de texto que el resto de la UI (se evita el default blanco del sistema).
+- **Desinstalación robusta**: antes de borrar, se cierran los procesos de Alarmino en ejecución y un ayudante en segundo plano espera a que el desinstalador termine para eliminar la carpeta de instalación completa (con reintentos). Evita que la app «reaparezca» o queden restos.
 
 ### 3.5 Registro de eventos
 - Tabla con: **fecha/hora** del suceso, **nombre de la alarma**, **estado** (`Tocada` / `Omitida`).
@@ -156,6 +163,3 @@ CI GitHub Actions.
    el despertador para la próxima alarma. Limitaciones: no despierta un equipo apagado del
    todo; el plan de energía debe permitir temporizadores de reactivación (en ocasiones solo
    «importantes») y en algunas máquinas hay que habilitarlo en la BIOS.
-2. **Edición de los sonidos predeterminados** desde Configuración: cambiar el **nombre** del
-   tono personalizado y **elegir el `.mp3`/`.wav`** deseado. Los tonos editados (o añadidos)
-   aparecen en el desplegable de predefinidos del editor de alarmas y en Configuración.

@@ -14,6 +14,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -30,8 +31,30 @@
                 <TextBlock Text="{Binding AppVersion}" Style="{StaticResource SecondaryText}" />
             </StackPanel>
 
-            <Button Grid.Column="1"
-                    Content="ALARMA"
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Margin="0,0,10,0"
+                        Content="LLUVIA"
+                        Command="{Binding TriggerRainCommand}"
+                        VerticalAlignment="Center" Padding="20,10" MinHeight="40" FontSize="16"
+                        Cursor="Hand">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                            <Setter Property="Foreground" Value="White" />
+                            <Setter Property="Background" Value="{DynamicResource BrushAccent}" />
+                            <Setter Property="FontWeight" Value="Bold" />
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource BrushAccentHover}" />
+                                </Trigger>
+                                <DataTrigger Binding="{Binding IsRainBlinkOn}" Value="True">
+                                    <Setter Property="Background" Value="#111111" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+
+                <Button Content="ALARMA"
                     Command="{Binding TriggerAlarmCommand}"
                     VerticalAlignment="Center" Padding="26,10" MinHeight="40" FontSize="16"
                     Cursor="Hand">
@@ -47,10 +70,14 @@
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter Property="Opacity" Value="0.85" />
                             </Trigger>
+                            <DataTrigger Binding="{Binding IsAlarmBlinkOn}" Value="True">
+                                <Setter Property="Background" Value="#111111" />
+                            </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Button.Style>
-            </Button>
+                </Button>
+            </StackPanel>
         </Grid>
 
         <!-- Barra de acciones -->
@@ -79,8 +106,16 @@
                     Style="{StaticResource SecondaryButton}" Margin="12,0,0,0" Padding="14,8" />
         </WrapPanel>
 
+        <!-- Parar la reproducción en curso -->
+        <Grid Grid.Row="2" HorizontalAlignment="Center" Margin="0,4,0,4">
+            <Button Content="PARAR ALARMA"
+                    Command="{Binding StopSoundCommand}"
+                    Visibility="{Binding IsSoundPlaying, Converter={StaticResource BoolToVisibilityConverter}}"
+                    Style="{StaticResource DangerButton}" Padding="28,12" FontSize="15" />
+        </Grid>
+
         <!-- Contenido: solo alarmas -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
             <TextBlock Text="Todavía no hay alarmas. Pulsa «Añadir alarma» para crear la primera."
                        Style="{StaticResource SecondaryText}" FontSize="14"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -195,7 +230,7 @@
         </Grid>
 
         <!-- Pie -->
-        <TextBlock Grid.Row="3" Margin="0,8,0,0" Style="{StaticResource SecondaryText}"
+        <TextBlock Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource SecondaryText}"
                    Text="Alarmino se guarda en segundo plano en la bandeja · Cierra la ventana para minimizar" />
     </Grid>
 </Window>

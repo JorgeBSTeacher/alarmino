@@ -13,12 +13,14 @@ public sealed class AudioService : IDisposable
 {
     private readonly object _gate = new();
     private readonly SoundLibrary _library;
+    private readonly Func<string, string?> _resolvePresetFile;
     private WaveOutEvent? _current;
     private CancellationTokenSource? _cts;
 
-    public AudioService(SoundLibrary? library = null)
+    public AudioService(SoundLibrary? library = null, Func<string, string?>? resolvePresetFile = null)
     {
         _library = library ?? new SoundLibrary();
+        _resolvePresetFile = resolvePresetFile ?? (_ => null);
     }
 
     public bool IsPlaying { get; private set; }
@@ -38,6 +40,7 @@ public sealed class AudioService : IDisposable
             StopLocked();
             _cts = new CancellationTokenSource();
             cts = _cts;
+            IsPlaying = true;
         }
 
         try
@@ -46,7 +49,7 @@ public sealed class AudioService : IDisposable
             for (int i = 0; i < repeats; i++)
             {
                 cts.Token.ThrowIfCancellationRequested();
-                PlayOnce(request);
+                await PlayOnceAsync(request, cts);
 
                 lock (_gate)
                 {
@@ -54,8 +57,6 @@ public sealed class AudioService : IDisposable
                     {
                         break; // parado a mitad de la reproducción
                     }
-
-                    IsPlaying = true;
                 }
 
                 if (i < repeats - 1)
@@ -87,15 +88,23 @@ public sealed class AudioService : IDisposable
         }
     }
 
-    private void PlayOnce(PlaybackRequest request)
+    /// <summary>
+    /// Reproduce una repetición y espera a que termine (evento PlaybackStopped)
+    /// antes de devolver el control, de modo que las N repeticiones quedan concatenadas
+    /// (cada audio completo, sin solaparse).
+    /// </summary>
+    private async Task PlayOnceAsync(PlaybackRequest request, CancellationTokenSource cts)
     {
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             WaveStream source = request.Sound.Kind switch
             {
-                SoundSourceKind.Preset => _library.ResolvePresetFile(request.Sound.PresetId) is { } file
-                    ? OpenFile(file)
-                    : PresetSynthesizer.Create(request.Sound.PresetId ?? "bell"),
+                SoundSourceKind.Preset => _resolvePresetFile(request.Sound.PresetId ?? "bell") is { } overriddenFile
+                    ? OpenFile(overriddenFile)
+                    : _library.ResolvePresetFile(request.Sound.PresetId) is { } file
+                        ? OpenFile(file)
+                        : PresetSynthesizer.Create(request.Sound.PresetId ?? "bell"),
                 _ => OpenFile(request.Sound.FilePath),
             };
 
@@ -108,10 +117,24 @@ public sealed class AudioService : IDisposable
             var output = new WaveOutEvent();
             output.Init(source);
             output.Volume = Math.Clamp(request.VolumePercent / 100f, 0f, 1f);
-            output.PlaybackStopped += (_, _) =>
+            output.PlaybackStopped += (_, args) =>
             {
+                lock (_gate)
+                {
+                    if (_current == output)
+                    {
+                        _current = null;
+                    }
+                }
+
+                if (args.Exception is not null)
+                {
+                    JsonDataStore.AppendLogLine(null, $"Error de reproducción: {args.Exception.Message}");
+                }
+
                 output.Dispose();
                 source.Dispose();
+                completion.TrySetResult(true);
             };
 
             lock (_gate)
@@ -125,7 +148,10 @@ public sealed class AudioService : IDisposable
         catch (Exception ex)
         {
             JsonDataStore.AppendLogLine(null, $"Error abriendo audio ({request.Sound.Kind}): {ex.Message}");
+            completion.TrySetResult(true);
         }
+
+        await completion.Task;
     }
 
     private static WaveStream OpenFile(string? path)

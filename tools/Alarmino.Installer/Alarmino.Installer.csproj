@@ -11,7 +11,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <ApplicationIcon>..\..\src\Alarmino\Resources\alarmino.ico</ApplicationIcon>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
   </PropertyGroup>
 
   <ItemGroup>

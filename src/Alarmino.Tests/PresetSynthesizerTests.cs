@@ -38,7 +38,7 @@ public class PresetSynthesizerTests
 
     public static TheoryData<string> PresetIds()
     {
-        var data = new TheoryData<string> { "bell", "ring", "schoolTone" };
+        var data = new TheoryData<string> { "airplaneBeep", "softChime", "fireAlarm" };
         return data;
     }
 

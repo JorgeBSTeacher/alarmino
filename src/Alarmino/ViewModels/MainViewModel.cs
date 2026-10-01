@@ -16,6 +16,7 @@ public sealed partial class MainViewModel : ObservableObject
 {
     private readonly JsonDataStore _store;
     private readonly AudioService _audio;
+    private readonly YouTubeAudioResolver _youtube;
     private readonly SchedulerEvaluator _evaluator;
     private readonly ThemeService _themes;
     private readonly AppSettings _settings;
@@ -38,12 +39,18 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _blinkIsAlarm;
     private DispatcherTimer? _blinkTimer;
     private string? _activeSoundLabel;
+    private DateTime _nextPrefetchSweepUtc = DateTime.MinValue;
+    private int _prefetchRunning;
 
     public MainViewModel()
     {
         _store = new JsonDataStore();
         _settings = _store.LoadSettings();
-        _audio = new AudioService(resolvePresetFile: id => SoundPresets.ResolveFilePath(id, _settings.PresetOverrides));
+        _youtube = new YouTubeAudioResolver();
+        _audio = new AudioService(
+            resolvePresetFile: id => SoundPresets.ResolveFilePath(id, _settings.PresetOverrides),
+            youtube: _youtube,
+            resolveFallbackFile: () => _settings.OfflineFallbackFilePath);
         _evaluator = new SchedulerEvaluator();
         _themes = new ThemeService();
         _dispatcher = Dispatcher.CurrentDispatcher;
@@ -109,7 +116,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ---------- Propiedades de estado ----------
 
-    public string AppVersion => "Alarmino v0.1.2";
+    public string AppVersion => "Alarmino v0.1.4";
 
     public bool MasterEnabled
     {
@@ -249,12 +256,12 @@ public sealed partial class MainViewModel : ObservableObject
         get => _settings.AlarmSound.Kind == SoundSourceKind.Preset;
         set
         {
-            bool current = _settings.AlarmSound.Kind == SoundSourceKind.Preset;
-            if (current != value)
+            if (value && _settings.AlarmSound.Kind != SoundSourceKind.Preset)
             {
-                _settings.AlarmSound.Kind = value ? SoundSourceKind.Preset : SoundSourceKind.File;
+                _settings.AlarmSound.Kind = SoundSourceKind.Preset;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(AlarmButtonUseFile));
+                OnPropertyChanged(nameof(AlarmButtonUseYouTube));
                 PersistSettings();
             }
         }
@@ -262,8 +269,48 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool AlarmButtonUseFile
     {
-        get => !AlarmButtonUsePreset;
-        set => AlarmButtonUsePreset = !value;
+        get => _settings.AlarmSound.Kind == SoundSourceKind.File;
+        set
+        {
+            if (value && _settings.AlarmSound.Kind != SoundSourceKind.File)
+            {
+                _settings.AlarmSound.Kind = SoundSourceKind.File;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AlarmButtonUsePreset));
+                OnPropertyChanged(nameof(AlarmButtonUseYouTube));
+                PersistSettings();
+            }
+        }
+    }
+
+    public bool AlarmButtonUseYouTube
+    {
+        get => _settings.AlarmSound.Kind == SoundSourceKind.YouTube;
+        set
+        {
+            if (value && _settings.AlarmSound.Kind != SoundSourceKind.YouTube)
+            {
+                _settings.AlarmSound.Kind = SoundSourceKind.YouTube;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AlarmButtonUsePreset));
+                OnPropertyChanged(nameof(AlarmButtonUseFile));
+                PersistSettings();
+            }
+        }
+    }
+
+    public string AlarmButtonYoutubeUrl
+    {
+        get => _settings.AlarmSound.YouTubePlaylistUrl ?? string.Empty;
+        set
+        {
+            if (!string.Equals(_settings.AlarmSound.YouTubePlaylistUrl, value, StringComparison.Ordinal))
+            {
+                _settings.AlarmSound.YouTubePlaylistUrl = value;
+                OnPropertyChanged();
+                PersistSettings();
+            }
+        }
     }
 
     public string AlarmButtonPresetId
@@ -338,6 +385,32 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>Copia un sonido elegido por el usuario a la biblioteca y devuelve la ruta guardada.</summary>
     public string StoreSoundInLibrary(string sourcePath) => _store.StoreSoundInLibrary(sourcePath);
+
+    // ---------- Sonido de respaldo sin conexión ----------
+
+    public string OfflineFallbackFilePathDisplay
+        => string.IsNullOrWhiteSpace(_settings.OfflineFallbackFilePath)
+            ? "Ningún archivo seleccionado"
+            : System.IO.Path.GetFileName(_settings.OfflineFallbackFilePath);
+
+    [RelayCommand]
+    private void BrowseOfflineFallback()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Selecciona el MP3 de respaldo (sin conexión)",
+            Filter = "Archivos de sonido (*.mp3;*.wav)|*.mp3;*.wav|MP3 (*.mp3)|*.mp3|WAV (*.wav)|*.wav",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            _settings.OfflineFallbackFilePath = StoreSoundInLibrary(dialog.FileName);
+            OnPropertyChanged(nameof(OfflineFallbackFilePathDisplay));
+            PersistSettings();
+        }
+    }
 
     // ---------- Parpadeo de los botones ALARMA / LLUVIA ----------
 
@@ -447,12 +520,12 @@ public sealed partial class MainViewModel : ObservableObject
         get => _settings.RainSound.Kind == SoundSourceKind.Preset;
         set
         {
-            bool current = _settings.RainSound.Kind == SoundSourceKind.Preset;
-            if (current != value)
+            if (value && _settings.RainSound.Kind != SoundSourceKind.Preset)
             {
-                _settings.RainSound.Kind = value ? SoundSourceKind.Preset : SoundSourceKind.File;
+                _settings.RainSound.Kind = SoundSourceKind.Preset;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(RainButtonUseFile));
+                OnPropertyChanged(nameof(RainButtonUseYouTube));
                 PersistSettings();
             }
         }
@@ -460,8 +533,48 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool RainButtonUseFile
     {
-        get => !RainButtonUsePreset;
-        set => RainButtonUsePreset = !value;
+        get => _settings.RainSound.Kind == SoundSourceKind.File;
+        set
+        {
+            if (value && _settings.RainSound.Kind != SoundSourceKind.File)
+            {
+                _settings.RainSound.Kind = SoundSourceKind.File;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RainButtonUsePreset));
+                OnPropertyChanged(nameof(RainButtonUseYouTube));
+                PersistSettings();
+            }
+        }
+    }
+
+    public bool RainButtonUseYouTube
+    {
+        get => _settings.RainSound.Kind == SoundSourceKind.YouTube;
+        set
+        {
+            if (value && _settings.RainSound.Kind != SoundSourceKind.YouTube)
+            {
+                _settings.RainSound.Kind = SoundSourceKind.YouTube;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RainButtonUsePreset));
+                OnPropertyChanged(nameof(RainButtonUseFile));
+                PersistSettings();
+            }
+        }
+    }
+
+    public string RainButtonYoutubeUrl
+    {
+        get => _settings.RainSound.YouTubePlaylistUrl ?? string.Empty;
+        set
+        {
+            if (!string.Equals(_settings.RainSound.YouTubePlaylistUrl, value, StringComparison.Ordinal))
+            {
+                _settings.RainSound.YouTubePlaylistUrl = value;
+                OnPropertyChanged();
+                PersistSettings();
+            }
+        }
     }
 
     public string RainButtonPresetId
@@ -612,6 +725,68 @@ public sealed partial class MainViewModel : ObservableObject
         PersistEvents();
     }
 
+    // ---------- Precarga de pistas de YouTube ----------
+
+    /// <summary>
+    /// Descarga en segundo plano la pista de las playlists configuradas para
+    /// que las alarmas con sonido de YouTube empiecen a su hora. La propia
+    /// descarga se descarta si ya hay una pista reciente o si no hay conexión.
+    /// </summary>
+    public void PrefetchYouTube()
+    {
+        // Como mucho una precarga en marcha: las llamadas repetidas se ignoran.
+        if (Interlocked.Exchange(ref _prefetchRunning, 1) == 1)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                foreach (string url in YouTubePlaylistUrls())
+                {
+                    await _youtube.PrefetchAsync(url);
+                }
+            }
+            catch
+            {
+                // La precarga nunca debe romper la aplicación.
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _prefetchRunning, 0);
+            }
+        });
+    }
+
+    /// <summary>URLs de playlist distintas usadas por las alarmas, ALARMA y LLUVIA.</summary>
+    private IEnumerable<string> YouTubePlaylistUrls()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (_settings.AlarmSound.Kind == SoundSourceKind.YouTube &&
+            seen.Add(_settings.AlarmSound.YouTubePlaylistUrl ?? string.Empty))
+        {
+            yield return _settings.AlarmSound.YouTubePlaylistUrl!;
+        }
+
+        if (_settings.RainSound.Kind == SoundSourceKind.YouTube &&
+            seen.Add(_settings.RainSound.YouTubePlaylistUrl ?? string.Empty))
+        {
+            yield return _settings.RainSound.YouTubePlaylistUrl!;
+        }
+
+        foreach (var alarm in Alarms)
+        {
+            if (alarm.Model.Sound.Kind == SoundSourceKind.YouTube &&
+                seen.Add(alarm.Model.Sound.YouTubePlaylistUrl ?? string.Empty))
+            {
+                yield return alarm.Model.Sound.YouTubePlaylistUrl!;
+            }
+        }
+    }
+
     // ---------- Arranque / parada ----------
 
     public void Initialize()
@@ -625,6 +800,9 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         _timer.Start();
+
+        // A la hora de tocar ya debe haber una pista descargada.
+        PrefetchYouTube();
     }
 
     public void AttachTrayIcon(TrayIconService tray) => _tray = tray;
@@ -639,7 +817,11 @@ public sealed partial class MainViewModel : ObservableObject
         PersistAlarms();
     }
 
-    public void PersistAlarms() => _store.SaveAlarms(Alarms.Select(v => v.Model));
+    public void PersistAlarms()
+    {
+        _store.SaveAlarms(Alarms.Select(v => v.Model));
+        PrefetchYouTube();
+    }
 
     public void Preview(PlaybackRequest request) => _audio.Play(request);
 
@@ -689,6 +871,8 @@ public sealed partial class MainViewModel : ObservableObject
             .Select(v => v.Model)
             .ToList();
 
+        MaybePrefetchStaleYouTubeTracks();
+
         var result = _evaluator.Evaluate(DateTime.Now, alarms);
 
         foreach (var missed in result.Missed)
@@ -711,6 +895,22 @@ public sealed partial class MainViewModel : ObservableObject
         {
             PlayAlarm(alarm);
         }
+    }
+
+    /// <summary>
+    /// Barredura periódica (cada 30 min) que vuelve a precargar las pistas
+    /// antiguas; así una alarma de última hora nunca espera una descarga.
+    /// </summary>
+    private void MaybePrefetchStaleYouTubeTracks()
+    {
+        DateTime now = DateTime.UtcNow;
+        if (now < _nextPrefetchSweepUtc)
+        {
+            return;
+        }
+
+        _nextPrefetchSweepUtc = now.AddMinutes(30);
+        PrefetchYouTube();
     }
 
     private void PlayAlarm(Alarm alarm)
@@ -752,7 +952,11 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void PersistEvents() => _store.SaveEvents(Events);
 
-    private void PersistSettings() => _store.SaveSettings(_settings);
+    private void PersistSettings()
+    {
+        _store.SaveSettings(_settings);
+        PrefetchYouTube();
+    }
 
     private void OnAlarmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

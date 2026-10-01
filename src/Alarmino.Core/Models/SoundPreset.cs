@@ -16,17 +16,39 @@ public class PresetOverride
     public string? FilePath { get; set; }
 }
 
-/// <summary>Biblioteca de sonidos predeterminados (sintetizados en código, sin copyright).</summary>
+/// <summary>Biblioteca de los tres sonidos predeterminados que incluye la app.</summary>
 public static class SoundPresets
 {
+    /// <summary>
+    /// Ids de las versiones anteriores (campana, timbre, tono escolar) y su
+    /// equivalente actual, para no perder la elección del usuario.
+    /// </summary>
+    private static readonly Dictionary<string, string> LegacyIds = new(StringComparer.Ordinal)
+    {
+        ["bell"] = "airplaneBeep",
+        ["ring"] = "softChime",
+        ["schoolTone"] = "fireAlarm",
+    };
+
     public static readonly IReadOnlyList<SoundPreset> All =
     [
-        new("bell", "Campana"),
-        new("ring", "Timbre"),
-        new("schoolTone", "Tono escolar"),
+        new("airplaneBeep", "Bip avión"),
+        new("softChime", "Suave"),
+        new("fireAlarm", "Incendio"),
     ];
 
     public static bool IsValidPreset(string? id) => All.Any(p => p.Id == id);
+
+    /// <summary>Convierte un id antiguo al actual; devuelve el mismo si ya es válido.</summary>
+    public static string? MigratePresetId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return id;
+        }
+
+        return LegacyIds.TryGetValue(id, out string? current) ? current : id;
+    }
 
     /// <summary>Presets visibles aplicando los cambios del usuario (nombre personalizado).</summary>
     public static IReadOnlyList<SoundPreset> GetAll(IReadOnlyList<PresetOverride>? overrides = null)

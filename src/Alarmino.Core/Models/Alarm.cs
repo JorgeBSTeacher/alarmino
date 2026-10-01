@@ -16,6 +16,9 @@ public enum SoundSourceKind
 
     /// <summary>Archivo de audio local (.mp3 / .wav).</summary>
     File,
+
+    /// <summary>Pista aleatoria de una playlist de YouTube (con respaldo local si no hay conexión).</summary>
+    YouTube,
 }
 
 /// <summary>Selección de sonido de una alarma: preset o archivo personalizado.</summary>
@@ -26,6 +29,9 @@ public class SoundSelection
     public string? PresetId { get; set; }
 
     public string? FilePath { get; set; }
+
+    /// <summary>URL de la playlist de YouTube (solo con <see cref="SoundSourceKind.YouTube"/>).</summary>
+    public string? YouTubePlaylistUrl { get; set; }
 
     public string DisplayText
     {
@@ -40,6 +46,11 @@ public class SoundSelection
             {
                 var preset = SoundPresets.All.FirstOrDefault(p => p.Id == PresetId);
                 return preset?.DisplayName ?? "Sonido predeterminado";
+            }
+
+            if (Kind == SoundSourceKind.YouTube)
+            {
+                return "YouTube";
             }
 
             return "Sin sonido";

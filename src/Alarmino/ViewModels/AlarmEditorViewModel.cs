@@ -15,9 +15,10 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
         DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
 
     private readonly bool[] _days = new bool[7];
-    private bool _usePreset = true;
-    private string _selectedPresetId = "bell";
+    private SoundSourceKind _soundKind = SoundSourceKind.Preset;
+    private string _selectedPresetId = "airplaneBeep";
     private string _filePath = string.Empty;
+    private string _youtubeUrl = string.Empty;
     private bool _fullMode = true;
     private string _durationText;
     private bool _repeatEnabled;
@@ -39,9 +40,10 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
             _days[i] = alarm.Days.HasFlag(DayFlagsExtensions.ToFlag(WeekOrder[i]));
         }
 
-        _usePreset = alarm.Sound.Kind == SoundSourceKind.Preset;
-        _selectedPresetId = alarm.Sound.PresetId ?? "bell";
+        _soundKind = alarm.Sound.Kind;
+        _selectedPresetId = alarm.Sound.PresetId ?? "airplaneBeep";
         _filePath = alarm.Sound.FilePath ?? string.Empty;
+        _youtubeUrl = alarm.Sound.YouTubePlaylistUrl ?? string.Empty;
 
         _fullMode = alarm.Mode == PlaybackMode.Full;
         _durationText = alarm.CustomDurationSeconds.ToString();
@@ -74,20 +76,47 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
 
     public bool UsePreset
     {
-        get => _usePreset;
+        get => _soundKind == SoundSourceKind.Preset;
         set
         {
-            if (SetProperty(ref _usePreset, value))
+            if (value && _soundKind != SoundSourceKind.Preset)
             {
+                _soundKind = SoundSourceKind.Preset;
+                OnPropertyChanged();
                 OnPropertyChanged(nameof(UseFile));
+                OnPropertyChanged(nameof(UseYouTube));
             }
         }
     }
 
     public bool UseFile
     {
-        get => !_usePreset;
-        set => UsePreset = !value;
+        get => _soundKind == SoundSourceKind.File;
+        set
+        {
+            if (value && _soundKind != SoundSourceKind.File)
+            {
+                _soundKind = SoundSourceKind.File;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(UsePreset));
+                OnPropertyChanged(nameof(UseYouTube));
+            }
+        }
+    }
+
+    public bool UseYouTube
+    {
+        get => _soundKind == SoundSourceKind.YouTube;
+        set
+        {
+            if (value && _soundKind != SoundSourceKind.YouTube)
+            {
+                _soundKind = SoundSourceKind.YouTube;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(UsePreset));
+                OnPropertyChanged(nameof(UseFile));
+            }
+        }
     }
 
     public string SelectedPresetId
@@ -110,6 +139,12 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
 
     public string FilePathDisplay
         => string.IsNullOrWhiteSpace(_filePath) ? "Ningún archivo seleccionado" : System.IO.Path.GetFileName(_filePath);
+
+    public string YouTubePlaylistUrl
+    {
+        get => _youtubeUrl;
+        set => SetProperty(ref _youtubeUrl, value);
+    }
 
     public bool FullMode
     {
@@ -276,6 +311,19 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
             return false;
         }
 
+        if (UseYouTube && string.IsNullOrWhiteSpace(YouTubePlaylistUrl))
+        {
+            error = "Pega la URL de la playlist de YouTube.";
+            return false;
+        }
+
+        if (UseYouTube &&
+            YouTubeAudioResolver.ExtractPlaylistId(YouTubePlaylistUrl.Trim()) is null)
+        {
+            error = "La URL debe ser una playlist de YouTube (youtube.com/playlist?list=…).";
+            return false;
+        }
+
         if (!_fullMode &&
             (!int.TryParse(DurationText.Trim(), out int duration) || duration < 1 || duration > 3600))
         {
@@ -316,9 +364,10 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
         }
 
         Alarm.Days = days;
-        Alarm.Sound.Kind = UsePreset ? SoundSourceKind.Preset : SoundSourceKind.File;
-        Alarm.Sound.PresetId = UsePreset ? SelectedPresetId : null;
-        Alarm.Sound.FilePath = UsePreset ? null : FilePath;
+        Alarm.Sound.Kind = _soundKind;
+        Alarm.Sound.PresetId = _soundKind == SoundSourceKind.Preset ? SelectedPresetId : null;
+        Alarm.Sound.FilePath = _soundKind == SoundSourceKind.File ? FilePath : null;
+        Alarm.Sound.YouTubePlaylistUrl = _soundKind == SoundSourceKind.YouTube ? YouTubePlaylistUrl.Trim() : null;
         Alarm.Mode = _fullMode ? PlaybackMode.Full : PlaybackMode.CustomDuration;
         Alarm.CustomDurationSeconds = _fullMode ? 0 : int.Parse(DurationText.Trim());
         Alarm.RepeatCount = RepeatEnabled ? int.Parse(RepeatCountText.Trim()) : 1;

@@ -3,9 +3,9 @@ using NAudio.Wave;
 namespace Alarmino.Core.Services;
 
 /// <summary>
-/// Genera los sonidos predeterminados (campana, timbre, tono escolar) como PCM de 16 bits
-/// en un <see cref="RawSourceWaveStream"/> en memoria (sin cabecera WAV que pueda fallar).
-/// Sin dependencias externas y sin problemas de copyright.
+/// Reserva: si algún sonido predeterminado (bip avión, suave o incendio) no está
+/// disponible en la biblioteca, se genera uno equivalente con síntesis como PCM de
+/// 16 bits en un <see cref="RawSourceWaveStream"/> en memoria (sin cabecera WAV).
 /// </summary>
 public static class PresetSynthesizer
 {
@@ -15,8 +15,8 @@ public static class PresetSynthesizer
     {
         double duration = presetId switch
         {
-            "ring" => 3.4,
-            "schoolTone" => 4.2,
+            "softChime" => 3.4,
+            "fireAlarm" => 4.2,
             _ => 3.6,
         };
 
@@ -29,8 +29,8 @@ public static class PresetSynthesizer
             double t = (double)i / SampleRate;
             float s = presetId switch
             {
-                "ring" => Ring(t),
-                "schoolTone" => School(t),
+                "softChime" => Ring(t),
+                "fireAlarm" => School(t),
                 _ => Bell(t),
             };
 

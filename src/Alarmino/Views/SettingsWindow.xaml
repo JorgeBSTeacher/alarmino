@@ -29,6 +29,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Text="Volumen general" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" />
@@ -67,7 +68,24 @@
                         </CheckBox>
                     </StackPanel>
 
-                    <Border Grid.Row="4" Grid.ColumnSpan="2" Background="{DynamicResource BrushCardBg}" BorderBrush="{DynamicResource BrushBorder}"
+                    <TextBlock Grid.Row="4" Text="Respaldo sin conexión" Style="{StaticResource SecondaryText}" VerticalAlignment="Top" Margin="0,6,0,0" />
+                    <StackPanel Grid.Row="4" Grid.Column="1" Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding OfflineFallbackFilePathDisplay}" Style="{StaticResource SecondaryText}"
+                                       VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <Button Grid.Column="1" Content="Examinar…"
+                                    Command="{Binding BrowseOfflineFallbackCommand}"
+                                    Style="{StaticResource SecondaryButton}" Padding="12,4" />
+                        </Grid>
+                        <TextBlock Style="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,4,0,0"
+                               Text="Sonido .mp3 que suena cuando un sonido de YouTube no se puede reproducir por falta de conexión." />
+                    </StackPanel>
+
+                    <Border Grid.Row="5" Grid.ColumnSpan="2" Background="{DynamicResource BrushCardBg}" BorderBrush="{DynamicResource BrushBorder}"
                             BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,10,0,0">
                         <StackPanel>
                             <TextBlock Text="Cómo funciona" FontWeight="SemiBold" Margin="0,0,0,6" />
@@ -113,6 +131,11 @@
                                     Style="{StaticResource SecondaryButton}"
                                     IsEnabled="{Binding AlarmButtonUseFile}" Padding="12,4" />
                         </Grid>
+
+                        <RadioButton Content="YouTube (playlist)…" IsChecked="{Binding AlarmButtonUseYouTube}" Margin="0,4,0,4" />
+                        <TextBox Text="{Binding AlarmButtonYoutubeUrl, UpdateSourceTrigger=PropertyChanged}"
+                                 IsEnabled="{Binding AlarmButtonUseYouTube}" Margin="16,0,0,0"
+                                 ToolTip="Pega la URL de una playlist de YouTube (p. ej. https://youtube.com/playlist?list=…)" />
                     </StackPanel>
 
                     <TextBlock Grid.Row="1" Text="Repeticiones" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,2,0,0" />
@@ -160,6 +183,11 @@
                                     Style="{StaticResource SecondaryButton}"
                                     IsEnabled="{Binding RainButtonUseFile}" Padding="12,4" />
                         </Grid>
+
+                        <RadioButton Content="YouTube (playlist)…" IsChecked="{Binding RainButtonUseYouTube}" Margin="0,4,0,4" />
+                        <TextBox Text="{Binding RainButtonYoutubeUrl, UpdateSourceTrigger=PropertyChanged}"
+                                 IsEnabled="{Binding RainButtonUseYouTube}" Margin="16,0,0,0"
+                                 ToolTip="Pega la URL de una playlist de YouTube (p. ej. https://youtube.com/playlist?list=…)" />
                     </StackPanel>
 
                     <TextBlock Grid.Row="1" Text="Repeticiones" Style="{StaticResource SecondaryText}" VerticalAlignment="Center" Margin="0,2,0,0" />
@@ -185,7 +213,7 @@
                     <TextBlock Grid.Row="0" Text="Editar presets" Style="{StaticResource SecondaryText}" VerticalAlignment="Top" Margin="0,2,0,0" />
                     <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,6">
                         <TextBlock Style="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,0,0,8"
-                                   Text="Renombra cada sonido predeterminado y/o asígnale un archivo que lo sustituya. «Restablecer» vuelve al sonido sintetizado y al nombre original. Los cambios se ven en todos los desplegables." />
+                                   Text="Renombra cada sonido predeterminado y/o asígnale un archivo que lo sustituya. «Restablecer» vuelve al audio original y al nombre de fábrica. Los cambios se ven en todos los desplegables." />
                     </StackPanel>
 
                     <TextBlock Grid.Row="1" Text=" " Style="{StaticResource SecondaryText}" />

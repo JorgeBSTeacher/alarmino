@@ -115,6 +115,56 @@ public sealed class SoundLibrary
         return true;
     }
 
+    /// <summary>
+    /// Copia los tres sonidos predeterminados que incluye la app a
+    /// sounds\presets, para que <see cref="ResolvePresetFile"/> los encuentre.
+    /// Van embebidos en el ensamblado, así que también funcionan en el
+    /// ejecutable único empaquetado. No sobrescribe lo que ya haya.
+    /// </summary>
+    public int EnsureDefaultPresets()
+    {
+        int installed = 0;
+        try
+        {
+            Directory.CreateDirectory(PresetsDirectory);
+            foreach (SoundPreset preset in SoundPresets.All)
+            {
+                if (ExtractDefaultPreset(preset.Id + ".mp3"))
+                {
+                    installed++;
+                }
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        return installed;
+    }
+
+    private bool ExtractDefaultPreset(string fileName)
+    {
+        string dest = Path.Combine(PresetsDirectory, fileName);
+        if (File.Exists(dest))
+        {
+            return false;
+        }
+
+        string resourceName = $"Alarmino.Core.PresetsDefault.{fileName}";
+        using Stream? source = typeof(SoundPresets).Assembly.GetManifestResourceStream(resourceName);
+        if (source is null)
+        {
+            return false;
+        }
+
+        using var target = File.Create(dest);
+        source.CopyTo(target);
+        return true;
+    }
+
     private static bool IsUnder(string directory, string path)
     {
         string dir = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);

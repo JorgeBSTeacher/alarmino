@@ -29,11 +29,14 @@ public class AppSettings
     public SoundSelection AlarmSound { get; set; } = new()
     {
         Kind = SoundSourceKind.Preset,
-        PresetId = "schoolTone",
+        PresetId = "fireAlarm",
     };
 
-    /// <summary>Cuántas veces seguidas suena el botón ALARMA.</summary>
-    public int AlarmRepeatCount { get; set; } = 3;
+    /// <summary>
+    /// Cuántas veces seguidas suena el botón ALARMA. Por defecto una sola: el
+    /// sonido de incendio ya dura más de un minuto.
+    /// </summary>
+    public int AlarmRepeatCount { get; set; } = 1;
 
     /// <summary>Pausa (segundos) entre toques del botón ALARMA.</summary>
     public int AlarmPauseSeconds { get; set; } = 1;
@@ -42,7 +45,7 @@ public class AppSettings
     public SoundSelection RainSound { get; set; } = new()
     {
         Kind = SoundSourceKind.Preset,
-        PresetId = "ring",
+        PresetId = "softChime",
     };
 
     /// <summary>Cuántas veces seguidas suena el botón LLUVIA.</summary>
@@ -50,6 +53,9 @@ public class AppSettings
 
     /// <summary>Cambios del usuario sobre los sonidos predeterminados (nombre/archivo).</summary>
     public List<PresetOverride> PresetOverrides { get; set; } = [];
+
+    /// <summary>MP3 de respaldo que suena cuando un sonido de YouTube no puede reproducirse (sin conexión o fallo).</summary>
+    public string? OfflineFallbackFilePath { get; set; }
 
     public AlarmSortMode SortMode { get; set; } = AlarmSortMode.ByTime;
 }

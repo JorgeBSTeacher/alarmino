@@ -19,3 +19,7 @@ Desktop.ini
 *.log
 logs/
 appsettings.local.json
+
+# --- Carpeta de trabajo con los audios originales ---
+# La copia canónica que se empaqueta está en src/Alarmino.Core/PresetsDefault/
+defaultsound/

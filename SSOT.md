@@ -2,7 +2,7 @@
 
 > Documento de referencia única para el desarrollo de **Alarmino**.
 > Cualquier discrepancia entre este documento y el código debe resolverse actualizando uno de los dos (prevalece el código en ejecución, pero se registra aquí el cambio).
-> Última actualización: 2026-09-13 · Versión v0.1.2
+> Última actualización: 2026-09-14 · Versión v0.1.4
 
 ## 1. Visión general
 
@@ -35,10 +35,11 @@
   - **Días** de repetición (bitmask L-V-D), estilo alarma de móvil. Mínimo 1 día.
   - **Sonido**:
     - Un **archivo personalizado** `.mp3` o `.wav` (rutas seleccionadas con diálogo `OpenFileDialog`), **o**
-    - Un **sonido predeterminado** de la biblioteca incluida (sintetizados en código, sin copyright):
-      - `Campana` — secuencia de tonos tipo campana.
-      - `Timbre` — anillo escolar de doble tono.
-      - `Tono escolar` — zumbido de tono prolongado.
+    - Una **pista aleatoria de una playlist de YouTube** (URL de la playlist), **o**
+    - Un **sonido predeterminado** de la biblioteca incluida (`presets\`):
+      - `Bip avión` (`avion.mp3`) — aviso breve de cabina. **Por defecto del botón ALARMA.**
+      - `Suave` (`suave.mp3`) — logotipo/acorde suave. **Por defecto del botón LLUVIA.**
+      - `Incendio` (`alarmaincendio.mp3`) — alarma de incendio (~64 s). **Por defecto del botón ALARMA, que por eso suena una sola vez.**
   - **Modo de reproducción**:
     - `Completo`: se reproduce el archivo/preset de principio a fin.
     - `Duración personalizada`: se reproduce durante un número de **segundos** configurable.
@@ -53,6 +54,8 @@
   2. Registra el evento «Tocada» en `events.json` y muestra una **notificación** toast (click → abre la app).
 - Las alarmas solo suenan mientras el proceso está en ejecución; por eso la app **se autoejecuta** y **minimiza a la bandeja**.
 - **Silenciar alarma activa**: opción en el menú de la bandeja que corta la reproducción actual e impide que la misma alarma vuelva a tocar hasta que pase de minuto.
+- **Sonido de YouTube con búfer previo (empieza puntual)**: la pista se descarga **con antelación** —al arrancar la app, al guardar o editar una alarma, cada 30 min y tras cada reproducción— a la caché `%APPDATA%\Alarmino\cache\youtube`. Cuando suena la alarma, si hay una pista ya descargada **arranca al instante**, sin esperar red. Solo si no hay ninguna (primera vez, o descarga fallida) se descarga en el momento, lo que puede retrasarla unos segundos.
+- **Control de conectividad y respaldo**: si no hay pista descargada se comprueba la conexión (`generate_204` de YouTube, 4 s). Sin conexión, o si falla la descarga, se reproduce el **MP3 de respaldo** global; sin respaldo configurado la alarma queda en silencio. La pista precargada se conserva entre reinicios y se sustituye tras usarla (una distinta cada vez, hasta un máximo de 3 en la caché).
 
 ### 3.3 Volumen
 - **Volumen global** (0–100 %) en Configuración.
@@ -64,13 +67,19 @@
 - **Autostart** activado/desactivado.
 - Criterio de ordenación de la lista (hora / día).
 - Idioma (solo español por ahora).
-- **Botón ALARMA (rojo)** de la ventana principal: sonido (preset o archivo), **número de repeticiones** seguidas (por defecto 3) y **pausa entre toques** (por defecto 1 s). Las repeticiones se **concatenan** (audio completo → pausa → siguiente). Mientras suena, el botón **parpadea rojo/negro** (texto siempre visible).
+- **Botón ALARMA (rojo)** de la ventana principal: sonido (preset o archivo), **número de repeticiones** seguidas (por defecto **1**, porque el sonido de incendio dura más de un minuto) y **pausa entre toques** (por defecto 1 s). Las repeticiones se **concatenan** (audio completo → pausa → siguiente). Mientras suena, el botón **parpadea rojo/negro** (texto siempre visible).
 - **Botón LLUVIA** de la ventana principal (acceso rápido al sonido de lluvia del patio): sonido configurable igual que ALARMA (preset o archivo), con **número de repeticiones** propio (por defecto 1). Ocupa la columna derecha de la cabecera junto a ALARMA. También **parpadea** mientras suena.
 - **Botón PARAR ALARMA** (centro de la ventana, visible solo mientras hay reproducción): detiene ALARMA, LLUVIA o la alarma programada en curso, previa confirmación que muestra el **nombre** de lo que se va a parar («la alarma “Recreo”», «el botón LLUVIA», …).
-- **Editar presets**: desde Configuración se puede **renombrar** cada sonido predeterminado y/o **asignarle un `.mp3`/`.wav`** que lo sustituya (el audio se copia a la biblioteca de sonidos). Los cambios se reflejan en todos los desplegables. «Restablecer» vuelve al sonido sintetizado y al nombre original.
+- **Editar presets**: desde Configuración se puede **renombrar** cada sonido predeterminado y/o **asignarle un `.mp3`/`.wav`** que lo sustituya (el audio se copia a la biblioteca de sonidos). Los cambios se reflejan en todos los desplegables. «Restablecer» vuelve al audio original y al nombre de fábrica.
 - **Configuración por pestañas**: General, ALARMA general, Botón de lluvia, Sonidos predeterminados.
 - **Estilo ComboBox**: en tema oscuro el desplegable usa el mismo fondo y color de texto que el resto de la UI (se evita el default blanco del sistema).
 - **Desinstalación robusta**: antes de borrar, se cierran los procesos de Alarmino en ejecución y un ayudante en segundo plano espera a que el desinstalador termine para eliminar la carpeta de instalación completa (con reintentos). Evita que la app «reaparezca» o queden restos.
+- **Tres tipos de sonido** disponibles en cada alarma y en los botones ALARMA/LLUVIA: **sonido predeterminado**, **archivo local** (`.mp3`/`.wav`) y **pista aleatoria de una playlist de YouTube** (se pega la URL de la playlist). La pista se elige al azar (sin repetir la anterior), se descarga por adelantado a una caché local y **reutiliza el mismo archivo en todas las repeticiones**, de forma que la alarma empieza puntual sin esperas. Si no hay conexión o la descarga falla, suena automáticamente el **MP3 de respaldo** elegido en Configuración → General → «Respaldo sin conexión» (si no hay ninguno, la alarma queda en silencio).
+
+### 3.4 bis Sonidos predeterminados
+- Los tres audios vienen **embebidos en el ensamblado** (no en archivos sueltos) para que funcionen también en el ejecutable único empaquetado. Al arrancar, `SoundLibrary.EnsureDefaultPresets()` los copia a `%APPDATA%\Alarmino\sounds\presets\{id}.mp3` **sin sobrescribir** lo que ya exista.
+- Si alguno faltara (instalación dañada), `PresetSynthesizer` genera un beep equivalente como último recurso, para que ninguna alarma se quede muda.
+- Derechos: los tres `.mp3` son obra de sus respectivos autores (obtenidos en Pixabay) y se usan con su permiso según las condiciones de esa plataforma. Los derechos de autor y demás derechos de esas obras pertenecen a sus titulares.
 
 ### 3.5 Registro de eventos
 - Tabla con: **fecha/hora** del suceso, **nombre de la alarma**, **estado** (`Tocada` / `Omitida`).
@@ -105,7 +114,7 @@ src/Alarmino (WPF, net8.0-windows)
 ├── Services/
 │   ├── ITimeProvider.cs     reloj inyectable (determinismo en tests)
 │   ├── JsonDataStore.cs     alarmas/config/eventos/log
-│   ├── AudioService.cs      NAudio: Play/Preview; presets sintetizados
+│   ├── AudioService.cs      NAudio: Play/Preview; presets (archivos) y respaldo
 │   ├── SchedulerService.cs  timer 500 ms + evaluación + disparo
 │   ├── AutostartService.cs  HKCU Run (+ /min)
 │   └── TrayIconService.cs   NotifyIcon + menú
@@ -133,6 +142,7 @@ scripts/                     dev, test, debug, build, publish, package,
 | El exe self-contained pesa (~150 MB) | Aceptable; el instalador comprime el payload (zip) |
 | Instalador gigante en Linux | Se compone vía Python **sin** Wine/Inno: stub + zip + marcas (formato `SelfExtractor`) |
 | Permisos admin | No requeridos (instalación + autostart por usuario) |
+| YouTube cambia su API interna (la librería YoutubeExplode está en modo mantenimiento) | Si falla la descarga, el sonido cae automáticamente al MP3 de respaldo local; el error queda en el log |
 
 ## 7. Plan de scripts (testear, debuggear, mejorar)
 

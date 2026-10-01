@@ -40,6 +40,7 @@ public sealed class JsonDataStore
         foreach (var alarm in alarms)
         {
             changed |= library.Normalize(alarm.Sound);
+            changed |= MigratePresetId(alarm.Sound);
         }
 
         if (changed)
@@ -61,6 +62,20 @@ public sealed class JsonDataStore
             changed = true;
         }
 
+        // Migración: los nombres internos de los sonidos predeterminados cambiaron
+        // (campana/timbre/tono escolar → bip avión/suave/incendio).
+        changed |= MigratePresetId(settings.AlarmSound);
+        changed |= MigratePresetId(settings.RainSound);
+        foreach (var ov in settings.PresetOverrides)
+        {
+            string? current = SoundPresets.MigratePresetId(ov.PresetId);
+            if (current is not null && current != ov.PresetId)
+            {
+                ov.PresetId = current;
+                changed = true;
+            }
+        }
+
         if (changed)
         {
             SaveSettings(settings);
@@ -70,6 +85,24 @@ public sealed class JsonDataStore
     }
 
     public void SaveSettings(AppSettings settings) => Save("config.json", settings);
+
+    /// <summary>Actualiza el id de un sonido predeterminado si venía de una versión anterior.</summary>
+    private static bool MigratePresetId(SoundSelection sound)
+    {
+        if (sound is null || sound.Kind != SoundSourceKind.Preset)
+        {
+            return false;
+        }
+
+        string? current = SoundPresets.MigratePresetId(sound.PresetId);
+        if (current == sound.PresetId)
+        {
+            return false;
+        }
+
+        sound.PresetId = current;
+        return true;
+    }
 
     /// <summary>Copia un archivo de sonido a la biblioteca y devuelve la ruta guardada.</summary>
     public string StoreSoundInLibrary(string sourcePath) => SoundLibrary.StoreUserSound(sourcePath);

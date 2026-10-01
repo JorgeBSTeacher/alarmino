@@ -11,6 +11,15 @@
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="YoutubeExplode" Version="6.6.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Los tres sonidos predeterminados viajan dentro del ensamblado (funciona
+         también en el ejecutable único empaquetado) y se copian a la biblioteca.
+         Nota de derechos: estos audios son obras de sus respectivos autores
+         (obtenidas en Pixabay); se usan aquí con su permiso según las condiciones
+         de esa plataforma. Al sustituirlos, comprueba también sus condiciones. -->
+    <EmbeddedResource Include="PresetsDefault\*.mp3" />
+  </ItemGroup>
 </Project>

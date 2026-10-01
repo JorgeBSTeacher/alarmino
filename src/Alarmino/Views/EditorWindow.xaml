@@ -73,6 +73,11 @@
                         Style="{StaticResource SecondaryButton}"
                         IsEnabled="{Binding UseFile}" Padding="12,4" />
             </Grid>
+
+            <RadioButton Content="YouTube (playlist)…" IsChecked="{Binding UseYouTube}" Margin="0,4,0,4" />
+            <TextBox Text="{Binding YouTubePlaylistUrl, UpdateSourceTrigger=PropertyChanged}"
+                     Margin="16,0,0,0" IsEnabled="{Binding UseYouTube}"
+                     ToolTip="Pega la URL de una playlist de YouTube (p. ej. https://youtube.com/playlist?list=…)" />
         </StackPanel>
 
         <!-- Modo -->

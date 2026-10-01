@@ -54,7 +54,7 @@ public sealed class InstallerWindow : Window
         {
             Text = _uninstallMode
                 ? "Se eliminarán los accesos directos, el autostart y la carpeta de instalación. Tus alarmas y audios personalizados se conservan salvo que marques la opción de abajo."
-                : "Sirenas del colegio · Windows 10/11 · v0.1.2",
+                : "Sirenas del colegio · Windows 10/11 · v0.1.4",
             TextWrapping = TextWrapping.Wrap,
             Foreground = SystemColors.GrayTextBrush,
             Margin = new Thickness(0, 0, 0, 14),

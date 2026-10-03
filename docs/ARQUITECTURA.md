@@ -72,7 +72,7 @@ Formato del instalador: `[stub.exe][payload.zip]ALARMINO_PAYLOAD[longitud u64 li
   - Duración personalizada: `TruncatedWaveStream` + `FadeOutWaveStream` (fade lineal de 5 s al final).
   - **YouTube** (`SoundSourceKind.YouTube`): `PlayAsync` resuelve **una sola vez por disparo** (antes del bucle de repeticiones) la pista con `YouTubeAudioResolver`; el mismo archivo local se reutiliza en todas las repeticiones.
     - `ResolveAsync` **no descarga nada en el caso normal**: toma la pista precargada de `YouTubeTrackCache` (`TryTake`, sin red ni espera) y, al terminar, encola en segundo plano la precarga de la siguiente (`QueueRefill`).
-    - Si no hay pista precargada: `ConnectivityProbe` (`generate_204`, timeout 4 s) y descarga en el momento. Cada descarga se valida con `TrackSanity.LooksPlayable` (≥ 10 KB y, si es MP3, ≥ 1 s de duración); si no pasa, se borra y se trata como fallo → **MP3 de respaldo**. Si no hay red o falla, devuelve el **MP3 de respaldo** (`AppSettings.OfflineFallbackFilePath`, con reenvío a `resolveFallbackFile`); sin respaldo, no suena.
+    - Si no hay pista precargada: `ConnectivityProbe` (`generate_204`, timeout 4 s) y descarga en el momento. Cada descarga se valida con `TrackSanity.LooksPlayable` comparando el tamaño real con el que anuncia el manifiesto (`IStreamInfo.Size`, margen del 2 %), con un suelo de 4 KB; si el manifiesto no da tamaño, se estimationa la duración por la cabecera MP3 (≥ 1 s). Si no pasa, se borra y se trata como fallo → **MP3 de respaldo**. No penaliza los sonidos cortos: un bip de 2 s se acepta tal cual. Si no hay red o falla, devuelve el **MP3 de respaldo** (`AppSettings.OfflineFallbackFilePath`, con reenvío a `resolveFallbackFile`); sin respaldo, no suena.
     - Precarga (`PrefetchAsync`): disparada por `MainViewModel` al arrancar, al guardar/cambiar alarmas o ajustes y en una barredura cada 30 min. Se salta si la pista es reciente (`MaxTrackAge` 6 h) o si ya hubo un intento hace menos de 30 min (`MinPrefetchInterval`), y nunca solapa descargas (`SemaphoreSlim` no bloqueante). `YouTubeTrackCache` guarda una pista por playlist (`{playlistId}--{videoId}.ext`, hasta 3), borra huérfanos y los archivos en descarga (`BeginWrite`), y `LoadExisting` recupera las pistas de sesiones anteriores para que el arranque no obligue a descargar.
     - La pista AAC (`.m4a`) se reproduce con `MediaFoundationReader`.
 - `WaveOutEvent.Init(source)`, volumen global, `PlaybackStopped` libera recursos. `Stop()` corta al instante (null-safe con `_gate`).
@@ -109,14 +109,14 @@ Cross-compilation: la app e instalador usan `EnableWindowsTargeting`, así que *
 ### 5.1 Estrategia
 La lógica que importa vive en `Alarmino.Core` (net8.0), por lo que la **mayoría del testeo se ejecuta en CI/Linux** sin WPF ni dispositivo de audio. La UI y la salida real de sonido se validan manualmente en Windows (limitación conocida).
 
-### 5.2 Casos (65 tests, xUnit verde)
+### 5.2 Casos (66 tests, xUnit verde)
 | Archivo / clase | Qué cubre |
 |---|---|
 | `SchedulerEvaluatorTests` (10) | disparo al entrar en el minuto, no redispare dentro del mismo minuto, días de la semana, alarmas inactivas, **franjas omitidas por salto de tiempo** (equipo dormido), orden de coincidencias — con `FakeTimeProvider` |
 | `PresetSynthesizerTests` (9) | cada preset produce señal no vacía, duración esperada y **RMS audible** (> 0.05) — red de seguridad si falta un audio |
 | `FadeOutWaveStreamTests` (3) | la señal se mantiene antes del fade, llega **a ~silencio** al final y decae en la ventana de fade |
 | `SoundLibraryTests` (4) | copia a biblioteca con nombre único, `Normalize` (migración), resolución de preset y **`EnsureDefaultPresets`**: instala los 3 MP3 y comprueba que son MPEG válidos con duración > 1 s |
-| `TrackSanityTests` (4) | acepta un MP3 real, rechaza vacío/mínimo/inexistente, rechaza una descarga **truncada** (pasa el peso pero no la duración) y devuelve null la duración si no es MP3 |
+| `TrackSanityTests` (5) | acepta un MP3 real y un **bip de 2 s** completo, rechaza vacío/mínimo/inexistente, detecta una descarga **truncada al 60 %** comparando con el tamaño del manifiesto, y sin tamaño esperado decide por la duración de la cabecera (y `null` si no es MP3) |
 | `YouTubeTrackCacheTests` (8) | tomar pista una sola vez, caducidad/frescura, sustitución por playlist, tope de 3 pistas, recuperación entre sesiones, borrado de huérfanos y protección del archivo en descarga |
 | `ModelsAndStoreTests` → `DayFlagsTests` (4) + `JsonDataStoreTests` (7) + `SoundPresetsTests` (4) | flags y texto de días, **round-trip JSON** de alarmas/config/eventos, archivos ausentes → valores por defecto, **round-trip de `SoundSelection.YouTube`** y del MP3 de respaldo, los 3 sonidos predeterminados y su **migración de ids antiguos** |
 | `ModelsAndStoreTests` → `YouTubeAudioResolverTests` (12) | extracción del id de playlist (URLs válidas/inválidas), **decisión offline → MP3 de respaldo** (con `IConnectivityProbe` falso) y **uso de la pista precargada sin tocar la red** |

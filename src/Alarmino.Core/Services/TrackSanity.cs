@@ -7,8 +7,15 @@ namespace Alarmino.Core.Services;
 /// </summary>
 public static class TrackSanity
 {
-    /// <summary>Peso mínimo razonable para un fragmento de audio (10 KB).</summary>
-    public const int MinimumBytes = 10 * 1024;
+    /// <summary>
+    /// Por debajo de este peso (4 KB) el archivo no es una pista, sino basura.
+    /// Es un suelo muy bajo a propósito: un bip corto de 2 s a 32 kbps pesa 8 KB
+    /// y debe sonar igual que una canción.
+    /// </summary>
+    public const int MinimumBytes = 4 * 1024;
+
+    /// <summary>Tolerancia al comparar con el tamaño que anuncia el manifiesto.</summary>
+    private const double CompletenessRatio = 0.98;
 
     private static readonly TimeSpan MinimumDuration = TimeSpan.FromSeconds(1);
 
@@ -19,10 +26,14 @@ public static class TrackSanity
         [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0, 0];
 
     /// <summary>
-    /// True si el archivo parece un fragmento de audio utilizable. Solo es una
-    /// heurística: pesa lo suficiente y, si es MP3, dura lo suficiente.
+    /// True si el archivo parece una pista completa y utilizable.
+    /// <para>
+    /// Si se conoce el tamaño que anuncia el manifiesto de YouTube, esa es la
+    /// comprobación fiable: el archivo está truncado si pesa menos. Sin tamaño
+    /// esperado se recurre a la duración estimada de la cabecera MP3.
+    /// </para>
     /// </summary>
-    public static bool LooksPlayable(string? path)
+    public static bool LooksPlayable(string? path, long? expectedBytes = null)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
@@ -31,9 +42,16 @@ public static class TrackSanity
 
         try
         {
-            if (new FileInfo(path).Length < MinimumBytes)
+            long length = new FileInfo(path).Length;
+
+            if (length < MinimumBytes)
             {
                 return false;
+            }
+
+            if (expectedBytes >= MinimumBytes)
+            {
+                return length >= expectedBytes * CompletenessRatio;
             }
 
             TimeSpan? duration = EstimateMpegDuration(path);

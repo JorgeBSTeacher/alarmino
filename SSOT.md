@@ -143,7 +143,7 @@ scripts/                     dev, test, debug, build, publish, package,
 | Instalador gigante en Linux | Se compone vía Python **sin** Wine/Inno: stub + zip + marcas (formato `SelfExtractor`) |
 | Permisos admin | No requeridos (instalación + autostart por usuario) |
 | YouTube cambia su API interna (la librería YoutubeExplode está en modo mantenimiento) | Si falla la descarga, el sonido cae automáticamente al MP3 de respaldo local; el error queda en el log |
-| La descarga de una pista llega vacía, truncada o corrupta | Se valida antes de reproducirla (peso mínimo y, si es MP3, duración mínima); si no es válida se descarta y se usa el MP3 de respaldo |
+| La descarga de una pista llega vacía, truncada o corrupta | Se valida antes de reproducirla (peso mínimo y comparación con el tamaño del manifiesto); si no es válida se descarta y se usa el MP3 de respaldo |
 
 ## 7. Plan de scripts (testear, debuggear, mejorar)
 

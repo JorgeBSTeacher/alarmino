@@ -325,7 +325,8 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
         // Si el archivo llega vacío, truncado o corrupto, no se registra: se
         // descarta y se cae al MP3 de respaldo en lugar de reproducir un fragmento.
-        if (!TrackSanity.LooksPlayable(dest))
+        // El tamaño que anuncia el manifiesto es la referencia de integridad.
+        if (!TrackSanity.LooksPlayable(dest, streamInfo.Size.Bytes))
         {
             _cache.CancelWrite(dest);
             TryDeleteFile(dest);

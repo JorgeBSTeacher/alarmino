@@ -323,6 +323,15 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             throw;
         }
 
+        // Si el archivo llega vacío, truncado o corrupto, no se registra: se
+        // descarta y se cae al MP3 de respaldo en lugar de reproducir un fragmento.
+        if (!TrackSanity.LooksPlayable(dest))
+        {
+            _cache.CancelWrite(dest);
+            TryDeleteFile(dest);
+            throw new InvalidDataException("La descarga de YouTube llegó incompleta o corrupta.");
+        }
+
         _cache.Register(playlistId, videoId, dest, DateTime.UtcNow, consumed);
         return dest;
     }

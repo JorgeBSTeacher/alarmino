@@ -18,6 +18,8 @@ public sealed class AudioService : IDisposable
     private readonly Func<string?>? _resolveFallbackFile;
     private WaveOutEvent? _current;
     private CancellationTokenSource? _cts;
+    private string? _playingPlaylistUrl;
+    private bool _playRecorded;
 
     public AudioService(
         SoundLibrary? library = null,
@@ -54,6 +56,11 @@ public sealed class AudioService : IDisposable
             cts = _cts;
             IsPlaying = true;
         }
+
+        _playingPlaylistUrl = request.Sound.Kind == SoundSourceKind.YouTube
+            ? request.Sound.YouTubePlaylistUrl
+            : null;
+        _playRecorded = false;
 
         try
         {
@@ -189,6 +196,10 @@ public sealed class AudioService : IDisposable
             }
 
             output.Play();
+
+            // La pista suena de verdad: es el único punto exacto para anotarla en
+            // el historial (una descarga cancelada antes de sonar no cuenta).
+            RecordYouTubePlayOnce();
         }
         catch (Exception ex)
         {
@@ -197,6 +208,25 @@ public sealed class AudioService : IDisposable
         }
 
         await completion.Task;
+    }
+
+    /// <summary>Registra una sola vez en el historial que la pista de YouTube ha sonado.</summary>
+    private void RecordYouTubePlayOnce()
+    {
+        if (_playRecorded || _youtube is null || _playingPlaylistUrl is null)
+        {
+            return;
+        }
+
+        _playRecorded = true;
+        try
+        {
+            _youtube.RecordPlay(_playingPlaylistUrl);
+        }
+        catch (Exception ex)
+        {
+            OperationLog.Write("audio", $"no se pudo registrar la reproducción ({ex.Message}).");
+        }
     }
 
     private static WaveStream OpenFile(string? path)

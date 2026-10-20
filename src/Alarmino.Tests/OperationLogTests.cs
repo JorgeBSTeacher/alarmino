@@ -1,8 +1,19 @@
 using System.Text.RegularExpressions;
 using Alarmino.Core.Services;
+using Xunit;
 
 namespace Alarmino.Tests;
 
+// OperationLog keeps process-wide static state (log root + recent-lines buffer),
+// and it is also exercised by other test classes. Running these tests in parallel
+// with anything else that writes through the sink makes line counts and the
+// recent-lines window race, so the whole class shares one serialized collection.
+[CollectionDefinition("operation-log", DisableParallelization = true)]
+public sealed class OperationLogCollection
+{
+}
+
+[Collection("operation-log")]
 public sealed class OperationLogTests
 {
     [Fact]

@@ -99,6 +99,58 @@ public class JsonDataStoreTests
     }
 
     [Fact]
+    public void LoadSettings_without_the_new_fields_uses_their_defaults()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+
+            // config.json de una versión anterior: no trae NoRepeatDays ni
+            // TargetBufferCount y debe cargarse con los valores por defecto.
+            File.WriteAllText(
+                Path.Combine(dir, "config.json"),
+                """{"GlobalVolumePercent":42,"Theme":1}""");
+
+            var settings = new JsonDataStore(dir).LoadSettings();
+
+            Assert.Equal(42, settings.GlobalVolumePercent);
+            Assert.Equal(7, settings.NoRepeatDays);
+            Assert.Equal(3, settings.TargetBufferCount);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void RoundTrips_the_anti_repeat_window_and_the_buffer_target()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new JsonDataStore(dir);
+            store.SaveSettings(new AppSettings { NoRepeatDays = 14, TargetBufferCount = 5 });
+
+            var settings = store.LoadSettings();
+
+            Assert.Equal(14, settings.NoRepeatDays);
+            Assert.Equal(5, settings.TargetBufferCount);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Missing_files_return_defaults()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-tests-" + Guid.NewGuid().ToString("N"));
@@ -424,6 +476,193 @@ public class YouTubeAudioResolverTests
             }
         }
     }
+
+    [Fact]
+    public void BufferState_counts_ready_tracks_against_the_target()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL1", "videoA", "m4a"));
+            File.WriteAllText(file, "audio");
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+
+            BufferState state = cache.GetBufferState(3);
+
+            Assert.Equal(1, state.Ready);
+            Assert.Equal(3, state.Target);
+            Assert.False(state.IsFull);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void BufferState_ignores_consumed_tracks()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL1", "videoA", "m4a"));
+            File.WriteAllText(file, "audio");
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+            Assert.True(cache.TryTake("PL1", out _, out _));  // la pista suena
+
+            BufferState state = cache.GetBufferState(3);
+
+            // La pista ya sonada no cuenta como lista para el próximo arranque.
+            Assert.Equal(0, state.Ready);
+            Assert.False(state.IsFull);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void BufferState_is_full_when_the_ready_count_reaches_the_target()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL1", "videoA", CreatePlayableFile(dir, "PL1", "videoA"), DateTime.UtcNow);
+            cache.Register("PL2", "videoB", CreatePlayableFile(dir, "PL2", "videoB"), DateTime.UtcNow);
+
+            BufferState state = cache.GetBufferState(2);
+
+            Assert.Equal(2, state.Ready);
+            Assert.True(state.IsFull);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void BufferState_of_a_non_positive_target_is_always_full()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            BufferState state = new YouTubeTrackCache(dir).GetBufferState(0);
+
+            Assert.Equal(0, state.Ready);
+            Assert.Equal(0, state.Target);
+            Assert.True(state.IsFull);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    private static string CreatePlayableFile(string dir, string playlistId, string videoId)
+    {
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, YouTubeTrackCache.BuildFileName(playlistId, videoId, "m4a"));
+        byte[] data = new byte[40 * 1024];
+        data[0] = 0xFF;
+        data[1] = 0xFB;
+        data[2] = 0xA0;
+        File.WriteAllBytes(path, data);
+        return path;
+    }
+
+    [Fact]
+    public void RecordPlay_notes_the_track_for_the_playlist()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-history-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var history = new PlayHistoryStore(dir);
+            var resolver = new YouTubeAudioResolver(history: history, connectivity: new FakeProbe(online: false));
+
+            resolver.RecordPlay("https://www.youtube.com/playlist?list=PL123abc", "videoA");
+
+            Assert.Equal(
+                ["videoA"],
+                history.InWindow("PL123abc", TimeSpan.FromDays(7), DateTime.UtcNow));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void RecordPlay_ignores_urls_that_are_not_a_playlist()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-history-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var history = new PlayHistoryStore(dir);
+            var resolver = new YouTubeAudioResolver(history: history, connectivity: new FakeProbe(online: false));
+
+            resolver.RecordPlay("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "videoA");
+
+            Assert.Empty(history.InWindow("PL123abc", TimeSpan.FromDays(7), DateTime.UtcNow));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TargetBufferCount_is_clamped_to_the_cache_capacity()
+    {
+        var resolver = new YouTubeAudioResolver(
+            cacheDir: Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N")),
+            connectivity: new FakeProbe(online: false));
+
+        resolver.TargetBufferCount = 99;
+        Assert.Equal(YouTubeTrackCache.MaxTracks, resolver.TargetBufferCount);
+
+        resolver.TargetBufferCount = -3;
+        Assert.Equal(0, resolver.TargetBufferCount);
+    }
+
+    [Fact]
+    public void NoRepeatDays_never_goes_below_zero()
+    {
+        var resolver = new YouTubeAudioResolver(
+            cacheDir: Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N")),
+            connectivity: new FakeProbe(online: false));
+
+        resolver.NoRepeatDays = -5;
+
+        Assert.Equal(0, resolver.NoRepeatDays);
+    }
 }
 
 public class SoundPresetsTests
@@ -480,5 +719,14 @@ public class SoundPresetsTests
         Assert.Equal(1, settings.RainRepeatCount);
         Assert.Empty(settings.PresetOverrides);
         Assert.Null(settings.OfflineFallbackFilePath);
+    }
+
+    [Fact]
+    public void AppSettings_defaults_include_a_week_without_repeats_and_a_buffer_of_three()
+    {
+        var settings = new AppSettings();
+
+        Assert.Equal(7, settings.NoRepeatDays);
+        Assert.Equal(3, settings.TargetBufferCount);
     }
 }

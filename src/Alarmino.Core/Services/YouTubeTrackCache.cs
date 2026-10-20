@@ -206,7 +206,7 @@ public sealed class YouTubeTrackCache
             if (!TrackSanity.LooksPlayable(file.FullName, known?.SizeBytes))
             {
                 obsolete.Add(file.FullName);
-                AppendLog($"Caché YouTube: se descarta pista dañada o incompleta ({file.Name}).");
+                AppendLog($"se descarta pista dañada o incompleta ({file.Name}).");
                 continue;
             }
 
@@ -217,6 +217,7 @@ public sealed class YouTubeTrackCache
                 Consumed = known?.Consumed ?? false,
                 ExpectedBytes = known?.SizeBytes ?? file.Length,
             };
+            AppendLog($"se recupera pista validada de una sesión anterior ({file.Name}).");
         }
 
         DeleteFiles(obsolete);
@@ -334,7 +335,7 @@ public sealed class YouTubeTrackCache
         }
         catch (Exception ex)
         {
-            AppendLog($"Caché YouTube: manifiesto ilegible ({ex.Message}).");
+            AppendLog($"manifiesto ilegible ({ex.Message}).");
             return new Dictionary<string, ManifestEntry>(StringComparer.Ordinal);
         }
     }
@@ -375,11 +376,11 @@ public sealed class YouTubeTrackCache
         }
         catch (Exception ex)
         {
-            AppendLog($"Caché YouTube: no se pudo guardar el manifiesto ({ex.Message}).");
+            AppendLog($"no se pudo guardar el manifiesto ({ex.Message}).");
         }
     }
 
-    private static void AppendLog(string message) => JsonDataStore.AppendLogLine(null, message);
+    private static void AppendLog(string message) => OperationLog.Write("cache", message);
 
     private static void DeleteFiles(IEnumerable<string> paths)
     {

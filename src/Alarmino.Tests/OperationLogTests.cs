@@ -1,0 +1,134 @@
+using System.Text.RegularExpressions;
+using Alarmino.Core.Services;
+
+namespace Alarmino.Tests;
+
+public sealed class OperationLogTests
+{
+    [Fact]
+    public void Write_creates_the_log_file_and_line_with_timestamp_and_source()
+    {
+        string dir = NewDir();
+        try
+        {
+            OperationLog.ResetRoot(dir);
+            OperationLog.Write("youtube", "prueba de escritura");
+
+            string file = OperationLog.CurrentFilePath;
+            Assert.True(File.Exists(file));
+
+            string line = Assert.Single(File.ReadAllLines(file));
+            Assert.EndsWith("prueba de escritura", line);
+            Assert.Matches(new Regex(@"^\d{2}:\d{2}:\d{2}\.\d{3} \[youtube\] "), line);
+        }
+        finally
+        {
+            Cleanup(dir);
+        }
+    }
+
+    [Fact]
+    public void Write_appends_successive_lines()
+    {
+        string dir = NewDir();
+        try
+        {
+            OperationLog.ResetRoot(dir);
+            OperationLog.Write("cache", "primera");
+            OperationLog.Write("audio", "segunda");
+
+            string[] lines = File.ReadAllLines(OperationLog.CurrentFilePath);
+
+            Assert.Equal(2, lines.Length);
+            Assert.Contains("[cache] primera", lines[0]);
+            Assert.Contains("[audio] segunda", lines[1]);
+        }
+        finally
+        {
+            Cleanup(dir);
+        }
+    }
+
+    [Fact]
+    public void Write_is_thread_safe_and_never_loses_lines()
+    {
+        string dir = NewDir();
+        try
+        {
+            OperationLog.ResetRoot(dir);
+            const int writers = 8;
+            const int perWriter = 50;
+
+            Parallel.For(0, writers, w =>
+            {
+                for (int i = 0; i < perWriter; i++)
+                {
+                    OperationLog.Write($"src{w}", $"mensaje {i}");
+                }
+            });
+
+            Assert.Equal(writers * perWriter, File.ReadAllLines(OperationLog.CurrentFilePath).Length);
+        }
+        finally
+        {
+            Cleanup(dir);
+        }
+    }
+
+    [Fact]
+    public void RecentLines_keeps_only_the_last_lines_within_capacity()
+    {
+        string dir = NewDir();
+        try
+        {
+            OperationLog.ResetRoot(dir);
+            for (int i = 0; i < OperationLog.MaxRecentLines + 25; i++)
+            {
+                OperationLog.Write("test", $"linea {i}");
+            }
+
+            IReadOnlyList<string> recent = OperationLog.RecentLines;
+
+            Assert.Equal(OperationLog.MaxRecentLines, recent.Count);
+            Assert.EndsWith($"linea {OperationLog.MaxRecentLines + 25 - 1}", recent[^1]);
+        }
+        finally
+        {
+            Cleanup(dir);
+        }
+    }
+
+    [Fact]
+    public void Write_never_throws_when_the_log_root_is_unusable()
+    {
+        string dir = NewDir();
+        try
+        {
+            // Una ruta que no puede ser un directorio (un archivo ocupa su lugar).
+            string blocker = Path.Combine(dir, "bloqueado");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(blocker, "x");
+            OperationLog.ResetRoot(blocker);
+
+            var exception = Record.Exception(() => OperationLog.Write("test", "mensaje"));
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            Cleanup(dir);
+        }
+    }
+
+    private static string NewDir() =>
+        Path.Combine(Path.GetTempPath(), "alarmino-log-" + Guid.NewGuid().ToString("N"));
+
+    private static void Cleanup(string dir)
+    {
+        OperationLog.ResetRoot(null);
+        if (Directory.Exists(dir))
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+}

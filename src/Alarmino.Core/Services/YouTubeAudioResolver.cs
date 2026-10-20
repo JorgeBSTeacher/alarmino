@@ -132,12 +132,14 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         if (_cache.TryTake(playlistId, out string? preloaded, out string? preloadedId))
         {
             LastVideoId = preloadedId;
+            AppendLog($"pista precargada elegida ({Describe(preloadedId)}): {preloaded}");
             QueueRefill(playlistUrl);
             return preloaded;
         }
 
         if (!await _connectivity.IsOnlineAsync())
         {
+            AppendLog("sin conexión; se usa el MP3 de respaldo.");
             return fallbackFilePath;
         }
 
@@ -148,21 +150,28 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             var (videoId, file) = await WithLiveTimeoutAsync(async ct =>
             {
                 string id = await PickRandomVideoIdAsync(playlistId, [LastVideoId], ct);
+                AppendLog($"pista elegida para descarga en vivo ({Describe(id)}).");
                 string path = await DownloadAudioAsync(playlistId, id, ct, consumed: true);
                 return (id, path);
             }, LiveDownloadTimeout, cancellationToken);
 
             LastVideoId = videoId;
             MarkPrefetchAttempt(playlistId);
+            AppendLog($"descarga en vivo completada: {file}");
             return file;
         }
         catch (OperationCanceledException)
         {
             throw;
         }
+        catch (TimeoutException ex)
+        {
+            AppendLog($"la descarga en vivo superó el tiempo máximo ({ex.Message}); se usa el respaldo.");
+            return fallbackFilePath;
+        }
         catch (Exception ex)
         {
-            AppendLog($"YouTube: {ex.Message}");
+            AppendLog($"la descarga en vivo falló ({ex.Message}); se usa el respaldo.");
             return fallbackFilePath;
         }
     }
@@ -215,28 +224,33 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
     {
         if (string.IsNullOrWhiteSpace(playlistUrl))
         {
+            AppendLog("precarga omitida: la playlist está vacía.");
             return;
         }
 
         string? playlistId = ExtractPlaylistId(playlistUrl);
         if (playlistId is null)
         {
+            AppendLog("precarga omitida: URL de playlist no válida.");
             return;
         }
 
         if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
         {
+            AppendLog($"precarga omitida ({playlistId}): ya hay una pista reciente.");
             return;
         }
 
         if (!force && !IsPrefetchDue(playlistId))
         {
+            AppendLog($"precarga omitida ({playlistId}): aún no toca (ventana de 30 min).");
             return;
         }
 
         // Como mucho una precarga a la vez (no solapar descargas).
         if (!await _prefetchGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
+            AppendLog($"precarga omitida ({playlistId}): ya hay otra en curso.");
             return;
         }
 
@@ -244,6 +258,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         {
             if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
             {
+                AppendLog($"precarga omitida ({playlistId}): apareció una pista fresca.");
                 return;
             }
 
@@ -251,11 +266,12 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             // barrido lo reintenta, en lugar de quemar la ventana de 30 minutos.
             if (!await _connectivity.IsOnlineAsync().ConfigureAwait(false))
             {
-                AppendLog("YouTube (precarga): sin conexión; se pospone el intento.");
+                AppendLog($"precarga pospuesta ({playlistId}): sin conexión; no se consume el intento.");
                 return;
             }
 
             MarkPrefetchAttempt(playlistId);
+            AppendLog($"precarga iniciada ({playlistId}).");
 
             if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
             {
@@ -276,13 +292,14 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
             string videoId = await PickRandomVideoIdAsync(playlistId, avoid, cancellationToken).ConfigureAwait(false);
             await DownloadAudioAsync(playlistId, videoId, cancellationToken).ConfigureAwait(false);
+            AppendLog($"precarga completada ({playlistId}, {Describe(videoId)}).");
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception ex)
         {
-            AppendLog($"YouTube (precarga): {ex.Message}");
+            AppendLog($"precarga fallida ({playlistId}): {ex.Message}");
         }
         finally
         {
@@ -371,10 +388,12 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         {
             _cache.CancelWrite(dest);
             TryDeleteFile(dest);
+            AppendLog($"descarga descartada ({Describe(videoId)}): llegó incompleta o corrupta.");
             throw new InvalidDataException("La descarga de YouTube llegó incompleta o corrupta.");
         }
 
         _cache.Register(playlistId, videoId, dest, DateTime.UtcNow, consumed);
+        AppendLog($"descarga completada ({Describe(videoId)}): {dest}");
         return dest;
     }
 
@@ -405,7 +424,10 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
     private static string DefaultCacheDir() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Alarmino", "cache", "youtube");
 
-    private static void AppendLog(string message) => JsonDataStore.AppendLogLine(null, message);
+    /// <summary>Identificador legible de una pista para el log.</summary>
+    private static string Describe(string? videoId) => string.IsNullOrWhiteSpace(videoId) ? "sin id" : videoId;
+
+    private static void AppendLog(string message) => OperationLog.Write("youtube", message);
 
     private static void TryDeleteFile(string path)
     {

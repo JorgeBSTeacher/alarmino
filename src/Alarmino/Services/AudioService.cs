@@ -96,7 +96,7 @@ public sealed class AudioService : IDisposable
         }
         catch (Exception ex)
         {
-            JsonDataStore.AppendLogLine(null, $"Error de reproducción: {ex.Message}");
+            OperationLog.Write("audio", $"error de reproducción: {ex.Message}");
         }
         finally
         {
@@ -120,7 +120,7 @@ public sealed class AudioService : IDisposable
     {
         if (_youtube is null)
         {
-            JsonDataStore.AppendLogLine(null, "YouTube: servicio no disponible.");
+            OperationLog.Write("audio", "servicio de YouTube no disponible; se usa el respaldo.");
             return _resolveFallbackFile?.Invoke();
         }
 
@@ -151,6 +151,8 @@ public sealed class AudioService : IDisposable
                 _ => OpenFile(request.Sound.FilePath),
             };
 
+            OperationLog.Write("audio", $"se intenta reproducir ({request.Sound.Kind}).");
+
             if (request.Mode == PlaybackMode.CustomDuration && request.CustomDurationSeconds > 0)
             {
                 source = new TruncatedWaveStream(source, TimeSpan.FromSeconds(request.CustomDurationSeconds));
@@ -172,7 +174,7 @@ public sealed class AudioService : IDisposable
 
                 if (args.Exception is not null)
                 {
-                    JsonDataStore.AppendLogLine(null, $"Error de reproducción: {args.Exception.Message}");
+                    OperationLog.Write("audio", $"error durante la reproducción: {args.Exception.Message}");
                 }
 
                 output.Dispose();
@@ -190,7 +192,7 @@ public sealed class AudioService : IDisposable
         }
         catch (Exception ex)
         {
-            JsonDataStore.AppendLogLine(null, $"Error abriendo audio ({request.Sound.Kind}): {ex.Message}");
+            OperationLog.Write("audio", $"fallo al abrir el audio ({request.Sound.Kind}): {ex.Message}");
             completion.TrySetResult(true);
         }
 

@@ -85,9 +85,11 @@ public interface IYouTubeAudioResolver
     /// <summary>
     /// Descarga en segundo plano la pista de una playlist para que la próxima
     /// alarma con ese sonido empiece a su hora. No hace nada si ya hay una pista
-    /// reciente o si no hay conexión.
+    /// reciente o si no hay conexión. Con <paramref name="force"/> se salta la
+    /// ventana de 30 minutos entre intentos: lo usa el arranque, donde una caché
+    /// vacía debe empezar a descargar ya en lugar de esperar al próximo barrido.
     /// </summary>
-    Task PrefetchAsync(string? playlistUrl, CancellationToken cancellationToken = default);
+    Task PrefetchAsync(string? playlistUrl, CancellationToken cancellationToken = default, bool force = false);
 
     /// <summary>
     /// Sincroniza en segundo plano la caché de una playlist con la lista remota:
@@ -96,6 +98,24 @@ public interface IYouTubeAudioResolver
     /// cancela o devuelve una lista vacía, la caché queda intacta. Nunca lanza.
     /// </summary>
     Task PrefetchAndSyncAsync(string? playlistUrl, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Comprueba al arrancar si cada playlist configurada tiene algo descargado
+    /// para la próxima alarma. Devuelve un veredicto por playlist con cuántas
+    /// pistas hay listas y el objetivo del búfer, y registra una línea por
+    /// playlist. Es una comprobación solo de disco: nunca espera a la red y nunca
+    /// lanza, así que no puede retrasar el arranque. La descarga forzosa de las
+    /// playlists sin nada listo la decide quien llama (con <c>force: true</c>).
+    /// </summary>
+    Task<IReadOnlyList<TrackReadiness>> CheckBootReadinessAsync(
+        IEnumerable<string?> playlistUrls,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// True si ya toca volver a intentar la precarga de esa playlist (la ventana
+    /// de 30 minutos ha pasado). Se expone para diagnóstico y pruebas.
+    /// </summary>
+    bool IsPrefetchDue(string playlistId);
 
     /// <summary>
     /// Anota que una pista empezó a reproducirse de verdad (para la ventana
@@ -337,10 +357,48 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         await PrefetchAndSyncCoreAsync(playlistUrl, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task PrefetchAsync(string? playlistUrl, CancellationToken cancellationToken = default)
+    public async Task PrefetchAsync(string? playlistUrl, CancellationToken cancellationToken = default, bool force = false)
     {
-        await PrefetchCoreAsync(playlistUrl, force: false, cancellationToken).ConfigureAwait(false);
+        await PrefetchCoreAsync(playlistUrl, force, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Comprueba el estado de descarga de cada playlist al arrancar. La
+    /// comprobación es solo de disco (no toca la red, no bloquea el arranque):
+    /// lee el búfer de cada playlist y registra el veredicto. No lanza la descarga
+    /// por sí misma; quien llama decide forzarla con <c>force: true</c> para las
+    /// playlists sin nada listo, de modo que la ventana de 30 minutos no deje el
+    /// arranque con la caché vacía esperando al siguiente barrido.
+    /// </summary>
+    public Task<IReadOnlyList<TrackReadiness>> CheckBootReadinessAsync(
+        IEnumerable<string?> playlistUrls,
+        CancellationToken cancellationToken = default)
+    {
+        var verdicts = new List<TrackReadiness>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (string? url in playlistUrls)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string? playlistId = ExtractPlaylistId(url ?? string.Empty);
+            if (playlistId is null || !seen.Add(playlistId))
+            {
+                continue;
+            }
+
+            // Solo se mira el disco: el objetivo del búfer y las pistas ya listas.
+            BufferState state = _cache.GetBufferState(TargetBufferCount);
+            var readiness = new TrackReadiness(playlistId, state.Ready, state.Target);
+            verdicts.Add(readiness);
+            AppendLog(BootReadiness.Describe(readiness));
+        }
+
+        return Task.FromResult<IReadOnlyList<TrackReadiness>>(verdicts);
+    }
+
+    /// <summary>True si ya toca volver a intentar la precarga de esa playlist.</summary>
+    public bool IsPrefetchDue(string playlistId) => IsPrefetchDueCore(playlistId);
 
     /// <summary>
     /// Sincroniza la caché de una playlist con la lista remota, en segundo plano:
@@ -571,7 +629,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             return;
         }
 
-        if (!force && !IsPrefetchDue(playlistId))
+        if (!force && !IsPrefetchDueCore(playlistId))
         {
             AppendLog($"precarga omitida ({playlistId}): aún no toca (ventana de 30 min).");
             AppendLogBufferState(playlistId);
@@ -643,7 +701,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         }
     }
 
-    private bool IsPrefetchDue(string playlistId)
+    private bool IsPrefetchDueCore(string playlistId)
     {
         lock (_attemptsGate)
         {
@@ -662,10 +720,10 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
     private async Task<string> PickRandomVideoIdAsync(string playlistId, IReadOnlyList<string?> avoid, CancellationToken cancellationToken)
     {
-        var videos = await _youtube.Playlists
-            .GetVideosAsync(playlistId, cancellationToken)
-            .CollectAsync(MaxPlaylistItems)
-            .ConfigureAwait(false);
+        // La misma lectura remota que usa la sincronización: así hay un único
+        // punto (inyectable) que consulta la lista de vídeos de una playlist.
+        PlaylistSnapshot snapshot = await _playlistVideoIds(playlistId, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> videos = snapshot.VideoIds;
 
         if (videos.Count == 0)
         {
@@ -679,7 +737,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         var recent = _history.InWindow(playlistId, TimeSpan.FromDays(NoRepeatDays), DateTime.UtcNow);
         if (recent.Count > 0)
         {
-            var window = videos.Where(v => !recent.Contains(v.Id.Value)).ToList();
+            var window = videos.Where(id => !recent.Contains(id)).ToList();
             if (window.Count > 0)
             {
                 excluded.UnionWith(recent);
@@ -690,13 +748,13 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             }
         }
 
-        var candidates = videos.Where(v => !excluded.Contains(v.Id.Value)).ToList();
+        var candidates = videos.Where(id => !excluded.Contains(id)).ToList();
         if (candidates.Count == 0)
         {
             candidates = videos.ToList();
         }
 
-        return candidates[Random.Shared.Next(candidates.Count)].Id.Value;
+        return candidates[Random.Shared.Next(candidates.Count)];
     }
 
     private async Task<string> DownloadAudioAsync(string playlistId, string videoId, CancellationToken cancellationToken, bool consumed = false)

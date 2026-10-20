@@ -794,14 +794,16 @@ public sealed partial class MainViewModel : ObservableObject
     /// que las alarmas con sonido de YouTube empiecen a su hora. La propia
     /// descarga se descarta si ya hay una pista reciente o si no hay conexión.
     /// </summary>
-    public void PrefetchYouTube() => RunYouTubeBackground(_youtube.PrefetchAsync);
+    public void PrefetchYouTube() => RunYouTubeBackground((url, ct) => _youtube.PrefetchAsync(url, ct));
 
     /// <summary>
-    /// Sincroniza en segundo plano todas las playlists de YouTube configuradas:
-    /// descarga lo que falte y borra lo que ya no está en la lista remota. Si una
-    /// consulta falla o llega vacía, esa playlist no se toca.
+    /// Secuencia de YouTube del arranque, en segundo plano: primero el veredicto
+    /// de descarga de cada playlist (solo disco, sin bloquear) y la descarga
+    /// forzosa de las que no tienen nada listo; después la sincronización de la
+    /// caché con la lista remota (descarga lo que falte y borra lo que ya no está).
+    /// Si una consulta falla o llega vacía, esa playlist no se toca.
     /// </summary>
-    public void SyncYouTubePlaylists() => RunYouTubeBackground(_youtube.PrefetchAndSyncAsync);
+    public void SyncYouTubePlaylists() => StartBootYouTubeSequence();
 
     /// <summary>
     /// Ejecuta una operación de YouTube sobre cada playlist configurada en un
@@ -821,20 +823,34 @@ public sealed partial class MainViewModel : ObservableObject
         {
             try
             {
-                foreach (string url in urls)
-                {
-                    await operation(url, CancellationToken.None);
-                }
-            }
-            catch
-            {
-                // La operación nunca debe romper la aplicación.
+                await RunYouTubeOperationAsync(operation, urls).ConfigureAwait(false);
             }
             finally
             {
                 Interlocked.Exchange(ref _prefetchRunning, 0);
             }
         });
+    }
+
+    /// <summary>
+    /// Aplica una operación de YouTube a cada URL. Nunca propaga errores: la
+    /// operación de fondo jamás debe romper la aplicación.
+    /// </summary>
+    private static async Task RunYouTubeOperationAsync(
+        Func<string?, CancellationToken, Task> operation,
+        IReadOnlyList<string> urls)
+    {
+        try
+        {
+            foreach (string url in urls)
+            {
+                await operation(url, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // La operación nunca debe romper la aplicación.
+        }
     }
 
     /// <summary>URLs de playlist distintas usadas por las alarmas, ALARMA y LLUVIA.</summary>
@@ -880,11 +896,76 @@ public sealed partial class MainViewModel : ObservableObject
 
         _timer.Start();
 
-        // Al encender el equipo se sincroniza la caché con la playlist remota:
-        // descarga lo que falte y borra lo que ya no está en la lista. Se hace
-        // antes de la precarga porque comparte pestillo con ella (si la precarga
-        // arranca primero, la sincronización se omite en este barrido).
-        SyncYouTubePlaylists();
+        // Al encender el equipo, una sola secuencia en segundo plano:
+        // 1) el veredicto de arranque (solo disco, sin bloquear) comprueba que cada
+        //    playlist tenga algo descargado y lo deja en el log; una playlist sin
+        //    nada listo fuerza la descarga de inmediato (la ventana de 30 minutos no
+        //    puede dejar una caché vacía al arrancar);
+        // 2) después se sincroniza la caché con la playlist remota: descarga lo que
+        //    falte y borra lo que ya no está en la lista.
+        StartBootYouTubeSequence();
+    }
+
+    /// <summary>
+    /// Secuencia de YouTube del arranque, en un único trabajo de fondo (comparte
+    /// el pestillo de «una operación a la vez»). Nunca bloquea el arranque y nunca
+    /// propaga errores a la interfaz.
+    /// </summary>
+    private void StartBootYouTubeSequence()
+    {
+        // Como mucho una operación en marcha: las llamadas repetidas se ignoran.
+        if (Interlocked.Exchange(ref _prefetchRunning, 1) == 1)
+        {
+            return;
+        }
+
+        string[] urls = YouTubePlaylistUrls().ToArray();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await CheckBootReadinessAsync(urls).ConfigureAwait(false);
+                await RunYouTubeOperationAsync(_youtube.PrefetchAndSyncAsync, urls).ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _prefetchRunning, 0);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Comprueba (solo disco, sin esperar a la red) el estado de descarga de las
+    /// playlists al arrancar y fuerza la descarga de las que no tienen nada listo.
+    /// </summary>
+    private async Task CheckBootReadinessAsync(IReadOnlyList<string> urls)
+    {
+        try
+        {
+            string?[] playlistUrls = urls.Cast<string?>().ToArray();
+            IReadOnlyList<TrackReadiness> verdicts =
+                await _youtube.CheckBootReadinessAsync(playlistUrls).ConfigureAwait(false);
+
+            // Nada listo justo al arrancar ⇒ descarga inmediata (force), saltando la
+            // ventana de 30 minutos que sí respeta el barrido normal. Se empareja cada
+            // veredicto con su URL por id de playlist, porque el veredicto deduplica.
+            var ready = new HashSet<string>(
+                verdicts.Where(v => v.IsReady).Select(v => v.PlaylistId),
+                StringComparer.Ordinal);
+
+            foreach (string url in urls)
+            {
+                string? playlistId = YouTubeAudioResolver.ExtractPlaylistId(url);
+                if (playlistId is not null && !ready.Contains(playlistId))
+                {
+                    await _youtube.PrefetchAsync(url, force: true).ConfigureAwait(false);
+                }
+            }
+        }
+        catch
+        {
+            // El veredicto de arranque nunca debe romper la aplicación.
+        }
     }
 
     /// <summary>
@@ -915,20 +996,21 @@ public sealed partial class MainViewModel : ObservableObject
         string? chosen = OfflineFallbackSelector.Select(
             _settings.OfflineFallbackFilePath, candidates, out IReadOnlyList<string> examined);
 
-        if (chosen is null || chosen == _settings.OfflineFallbackFilePath)
-        {
-            if (chosen is null)
-            {
-                OperationLog.Write("arranque", $"sin respaldo sin conexión; examinados: {string.Join(", ", examined)}");
-            }
+        // El log del arranque confirma SIEMPRE el respaldo, tanto el validado
+        // (el camino normal, que antes no registraba nada) como el que falta.
+        bool keptConfigured = chosen is not null && chosen == _settings.OfflineFallbackFilePath;
+        OperationLog.Write(
+            "arranque",
+            OfflineFallbackReadiness.Describe(new OfflineFallbackOutcome(chosen, keptConfigured, examined)));
 
+        if (chosen is null || keptConfigured)
+        {
             return;
         }
 
         _settings.OfflineFallbackFilePath = chosen;
         PersistSettings();
         OnPropertyChanged(nameof(OfflineFallbackFilePathDisplay));
-        OperationLog.Write("arranque", $"respaldo sin conexión establecido: {chosen}");
     }
 
     public void AttachTrayIcon(TrayIconService tray) => _tray = tray;

@@ -39,6 +39,9 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _blinkIsAlarm;
     private DispatcherTimer? _blinkTimer;
     private string? _activeSoundLabel;
+    private DateTime _playbackStartedUtc;
+    private bool _isDownloading;
+    private string _playerStatusText = PlayerStatusFormatter.IdleText;
     private DateTime _nextPrefetchSweepUtc = DateTime.MinValue;
     private int _prefetchRunning;
 
@@ -79,6 +82,20 @@ public sealed partial class MainViewModel : ObservableObject
                 PlaybackFinished?.Invoke();
                 NotifyPlaybackState();
             });
+        };
+
+        // El resolutor descarga en hilos de fondo: la vista se refresca siempre en
+        // el hilo de interfaz. Con un giro pendiente basta; los repetidos se agrupan.
+        _youtube.DownloadActivityChanged += downloading =>
+        {
+            if (_dispatcher.CheckAccess())
+            {
+                SetDownloadingActivity(downloading);
+            }
+            else
+            {
+                _dispatcher.BeginInvoke(() => SetDownloadingActivity(downloading));
+            }
         };
 
         Alarms = new ObservableCollection<AlarmViewModel>(
@@ -357,6 +374,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void TriggerAlarm()
     {
         _activeSoundLabel = "el botón ALARMA";
+        MarkPlaybackStarted();
         StartBlink(alarm: true);
         var request = new PlaybackRequest(
             _settings.AlarmSound,
@@ -433,6 +451,41 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>El botón deja de parpadear al terminar la reproducción.</summary>
     public bool IsSoundPlaying => _audio.IsPlaying;
 
+    /// <summary>
+    /// Estado visible del reproductor: <c>En espera</c>, <c>Descargando…</c> o
+    /// <c>Reproduciendo — mm:ss</c>. El contador lo refresca el temporizador de
+    /// 500 ms ya existente, sin añadir ninguno nuevo.
+    /// </summary>
+    public string PlayerStatusText
+    {
+        get => _playerStatusText;
+        private set => SetProperty(ref _playerStatusText, value);
+    }
+
+    /// <summary>
+    /// Vuelca el estado actual en <see cref="PlayerStatusText"/>: reproduce,
+    /// descarga o espera, con los segundos transcurridos cuando suena algo.
+    /// </summary>
+    private void RefreshPlayerStatus()
+    {
+        string text = PlayerStatusFormatter.Describe(
+            _audio.IsPlaying,
+            _isDownloading,
+            _activeSoundLabel,
+            DateTime.UtcNow - _playbackStartedUtc);
+        PlayerStatusText = text;
+    }
+
+    /// <summary>Marca el arranque del contador de reproducción (el «00:00» visible).</summary>
+    private void MarkPlaybackStarted() => _playbackStartedUtc = DateTime.UtcNow;
+
+    /// <summary>Anota el estado de descarga que llega del resolutor (ya en el hilo de interfaz).</summary>
+    private void SetDownloadingActivity(bool downloading)
+    {
+        _isDownloading = downloading;
+        RefreshPlayerStatus();
+    }
+
     private void StartBlink(bool alarm)
     {
         StopBlink();
@@ -474,7 +527,11 @@ public sealed partial class MainViewModel : ObservableObject
         SetBlinkOn(!(_blinkIsAlarm ? _isAlarmBlinkOn : _isRainBlinkOn));
     }
 
-    private void NotifyPlaybackState() => OnPropertyChanged(nameof(IsSoundPlaying));
+    private void NotifyPlaybackState()
+    {
+        OnPropertyChanged(nameof(IsSoundPlaying));
+        RefreshPlayerStatus();
+    }
 
     /// <summary>Detiene la reproducción actual (ALARMA, LLUVIA o alarma programada) con confirmación.</summary>
     [RelayCommand]
@@ -635,6 +692,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void TriggerRain()
     {
         _activeSoundLabel = "el botón LLUVIA";
+        MarkPlaybackStarted();
         StartBlink(alarm: false);
         var request = new PlaybackRequest(
             _settings.RainSound,
@@ -945,6 +1003,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             PlayAlarm(alarm);
         }
+
+        // Refresca el estado visible (y el contador de segundos) sin un temporizador extra.
+        RefreshPlayerStatus();
     }
 
     /// <summary>
@@ -966,6 +1027,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void PlayAlarm(Alarm alarm)
     {
         _activeSoundLabel = $"la alarma «{alarm.Name}»";
+        MarkPlaybackStarted();
         AddEvent(new EventLogEntry
         {
             UtcTime = DateTime.UtcNow,

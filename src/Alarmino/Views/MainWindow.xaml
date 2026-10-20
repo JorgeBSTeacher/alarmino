@@ -108,10 +108,18 @@
 
         <!-- Parar la reproducción en curso -->
         <Grid Grid.Row="2" HorizontalAlignment="Center" Margin="0,4,0,4">
-            <Button Content="PARAR ALARMA"
-                    Command="{Binding StopSoundCommand}"
-                    Visibility="{Binding IsSoundPlaying, Converter={StaticResource BoolToVisibilityConverter}}"
-                    Style="{StaticResource DangerButton}" Padding="28,12" FontSize="15" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{Binding PlayerStatusText}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,16,0"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           ToolTip="Estado del reproductor: en espera, descargando o reproduciendo con el tiempo transcurrido." />
+                <Button Content="PARAR ALARMA"
+                        Command="{Binding StopSoundCommand}"
+                        Visibility="{Binding IsSoundPlaying, Converter={StaticResource BoolToVisibilityConverter}}"
+                        Style="{StaticResource DangerButton}" Padding="28,12" FontSize="15" />
+            </StackPanel>
         </Grid>
 
         <!-- Contenido: solo alarmas -->

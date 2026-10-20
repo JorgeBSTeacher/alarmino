@@ -243,6 +243,43 @@
                     </ItemsControl>
                 </Grid>
             </TabItem>
+
+            <!-- Pestaña Diagnóstico: solo lectura, se refresca al mostrar la pestaña -->
+            <TabItem Header="Diagnóstico">
+                <Grid Margin="8,14,8,6">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Style="{StaticResource SecondaryText}" TextWrapping="Wrap"
+                                   VerticalAlignment="Center"
+                                   Text="Últimas operaciones de esta sesión (descargas, reproducción, arranque). Solo lectura." />
+                        <Button Grid.Column="1" Content="Actualizar"
+                                Click="OnRefreshDiagnosticsClick"
+                                Style="{StaticResource SecondaryButton}" Padding="12,4" Margin="8,0,0,0" />
+                    </Grid>
+
+                    <TextBox Grid.Row="1"
+                             x:Name="DiagnosticsTextBox"
+                             IsReadOnly="True"
+                             IsReadOnlyCaretVisible="False"
+                             TextWrapping="NoWrap"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="11"
+                             MinHeight="260"
+                             MaxHeight="360"
+                             Padding="8" />
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <!-- Acciones -->

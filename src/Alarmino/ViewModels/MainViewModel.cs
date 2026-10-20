@@ -46,7 +46,11 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _store = new JsonDataStore();
         _settings = _store.LoadSettings();
-        _youtube = new YouTubeAudioResolver();
+        _youtube = new YouTubeAudioResolver
+        {
+            NoRepeatDays = _settings.NoRepeatDays,
+            TargetBufferCount = _settings.TargetBufferCount,
+        };
         _audio = new AudioService(
             resolvePresetFile: id => SoundPresets.ResolveFilePath(id, _settings.PresetOverrides),
             youtube: _youtube,
@@ -1001,6 +1005,8 @@ public sealed partial class MainViewModel : ObservableObject
     private void PersistSettings()
     {
         _store.SaveSettings(_settings);
+        _youtube.NoRepeatDays = _settings.NoRepeatDays;
+        _youtube.TargetBufferCount = _settings.TargetBufferCount;
         PrefetchYouTube();
     }
 

@@ -3,6 +3,16 @@ using System.Text.Json;
 namespace Alarmino.Core.Services;
 
 /// <summary>
+/// Estado del búfer de descargas: cuántas pistas sin consumir hay listas para el
+/// próximo arranque frente al objetivo configurado.
+/// </summary>
+public readonly record struct BufferState(int Ready, int Target)
+{
+    /// <summary>True si ya hay tantas pistas listas como pide el objetivo.</summary>
+    public bool IsFull => Target <= 0 || Ready >= Target;
+}
+
+/// <summary>
 /// Caché de pistas de YouTube descargadas por adelantado (una por playlist).
 /// Permite que la alarma empiece a sonar a su hora sin esperar una descarga.
 /// Solo guarda las últimas <see cref="MaxTracks"/> pistas y borra el resto.
@@ -130,6 +140,20 @@ public sealed class YouTubeTrackCache
                    !entry.Consumed &&
                    File.Exists(entry.FilePath) &&
                    nowUtc - entry.DownloadedAtUtc < maxAge;
+        }
+    }
+
+    /// <summary>
+    /// Cuántas pistas sin consumir hay listas (y existen en disco) frente al
+    /// objetivo del búfer. Las pistas ya sonadas no cuentan: no sirven para el
+    /// próximo arranque en frío.
+    /// </summary>
+    public BufferState GetBufferState(int target)
+    {
+        lock (_gate)
+        {
+            int ready = _entries.Values.Count(e => !e.Consumed && File.Exists(e.FilePath));
+            return new BufferState(ready, Math.Max(0, target));
         }
     }
 

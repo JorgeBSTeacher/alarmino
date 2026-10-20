@@ -57,5 +57,17 @@ public class AppSettings
     /// <summary>MP3 de respaldo que suena cuando un sonido de YouTube no puede reproducirse (sin conexión o fallo).</summary>
     public string? OfflineFallbackFilePath { get; set; }
 
+    /// <summary>
+    /// Días durante los que una pista ya reproducida no vuelve a elegirse. Si la
+    /// playlist entera está dentro de la ventana, se repite y se registra.
+    /// </summary>
+    public int NoRepeatDays { get; set; } = 7;
+
+    /// <summary>
+    /// Número de pistas sin consumir que se mantienen listas para el próximo
+    /// arranque (búfer de descarga en segundo plano).
+    /// </summary>
+    public int TargetBufferCount { get; set; } = 3;
+
     public AlarmSortMode SortMode { get; set; } = AlarmSortMode.ByTime;
 }

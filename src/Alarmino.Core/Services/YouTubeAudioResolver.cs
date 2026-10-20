@@ -75,6 +75,13 @@ public interface IYouTubeAudioResolver
     /// reciente o si no hay conexión.
     /// </summary>
     Task PrefetchAsync(string? playlistUrl, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Anota que una pista empezó a reproducirse de verdad (para la ventana
+    /// antirrepetición). Es "best-effort": nunca lanza. Con <paramref name="videoId"/>
+    /// nulo se usa el último id resuelto (<see cref="YouTubeAudioResolver.LastVideoId"/>).
+    /// </summary>
+    void RecordPlay(string? playlistUrl, string? videoId = null);
 }
 
 /// <summary>Implementación de <see cref="IYouTubeAudioResolver"/> con YoutubeExplode.</summary>
@@ -89,30 +96,113 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
     /// <summary>Una pista más antigua que esto se vuelve a precargar.</summary>
     private static readonly TimeSpan MaxTrackAge = TimeSpan.FromHours(6);
 
-    /// <summary>
-    /// Tiempo máximo para la descarga en vivo (cuando suena la alarma y no hay
-    /// pista precargada). Sin él, una red colgada dejaría la alarma en silencio.
-    /// </summary>
+    /// <summary>Tiempo máximo para la descarga en vivo (cuando suena la alarma y no hay
+    /// pista precargada). Sin él, una red colgada dejaría la alarma en silencio.</summary>
     private static readonly TimeSpan LiveDownloadTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Ventana por defecto sin repetir una pista (días) si no se configura otra.</summary>
+    private const int DefaultNoRepeatDays = 7;
 
     private readonly YouTubeTrackCache _cache;
     private readonly IConnectivityProbe _connectivity;
     private readonly YoutubeClient _youtube = new();
+    private readonly PlayHistoryStore _history;
     private readonly SemaphoreSlim _prefetchGate = new(1, 1);
     private readonly object _attemptsGate = new();
     private readonly Dictionary<string, DateTime> _lastPrefetchUtc = new(StringComparer.Ordinal);
 
+    private int _noRepeatDays = DefaultNoRepeatDays;
+    private int _targetBufferCount = YouTubeTrackCache.MaxTracks;
+
     /// <summary>Id del último vídeo reproducido, para no repetirlo consecutivamente.</summary>
     public string? LastVideoId { get; private set; }
 
-    public YouTubeAudioResolver(string? cacheDir = null, IConnectivityProbe? connectivity = null, YouTubeTrackCache? cache = null)
+    public YouTubeAudioResolver(
+        string? cacheDir = null,
+        IConnectivityProbe? connectivity = null,
+        YouTubeTrackCache? cache = null,
+        PlayHistoryStore? history = null)
     {
         _cache = cache ?? new YouTubeTrackCache(cacheDir ?? DefaultCacheDir());
         _connectivity = connectivity ?? new ConnectivityProbe();
+        _history = history ?? new PlayHistoryStore(AppDataDir());
 
         // Las pistas ya descargadas en sesiones anteriores sirven tal cual.
         _cache.LoadExisting();
     }
+
+    /// <summary>
+    /// Días durante los que una pista ya reproducida no se vuelve a elegir. Se
+    /// recorta a un mínimo de 0 (0 = sin ventana antirrepetición).
+    /// </summary>
+    public int NoRepeatDays
+    {
+        get
+        {
+            lock (_attemptsGate)
+            {
+                return _noRepeatDays;
+            }
+        }
+
+        set
+        {
+            lock (_attemptsGate)
+            {
+                _noRepeatDays = Math.Max(0, value);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pistas sin consumir que se intentan mantener listas para el próximo
+    /// arranque. Se recorta al máximo que la caché puede guardar.
+    /// </summary>
+    public int TargetBufferCount
+    {
+        get
+        {
+            lock (_attemptsGate)
+            {
+                return _targetBufferCount;
+            }
+        }
+
+        set
+        {
+            lock (_attemptsGate)
+            {
+                _targetBufferCount = Math.Clamp(value, 0, YouTubeTrackCache.MaxTracks);
+            }
+        }
+    }
+
+    /// <summary>Historial de reproducción usado para la ventana antirrepetición.</summary>
+    public PlayHistoryStore History => _history;
+
+    /// <summary>
+    /// Registra que una pista ha sonado. Lo llama el servicio de audio cuando el
+    /// archivo empieza a reproducirse de verdad: es el punto más exacto (una pista
+    /// descargada pero cancelada antes de sonar no cuenta).
+    /// </summary>
+    public void RecordPlay(string? playlistUrl, string? videoId = null)
+    {
+        videoId ??= LastVideoId;
+        if (string.IsNullOrWhiteSpace(videoId))
+        {
+            return;
+        }
+
+        string? playlistId = ExtractPlaylistId(playlistUrl ?? string.Empty);
+        if (playlistId is null)
+        {
+            return;
+        }
+
+        _history.Record(playlistId, videoId, DateTime.UtcNow);
+        AppendLog($"reproducción registrada ({playlistId}, {Describe(videoId)}).");
+    }
+
 
     public async Task<string?> ResolveAsync(string? playlistUrl, string? fallbackFilePath, CancellationToken cancellationToken)
     {
@@ -238,12 +328,14 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
         {
             AppendLog($"precarga omitida ({playlistId}): ya hay una pista reciente.");
+            AppendLogBufferState(playlistId);
             return;
         }
 
         if (!force && !IsPrefetchDue(playlistId))
         {
             AppendLog($"precarga omitida ({playlistId}): aún no toca (ventana de 30 min).");
+            AppendLogBufferState(playlistId);
             return;
         }
 
@@ -259,6 +351,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
             {
                 AppendLog($"precarga omitida ({playlistId}): apareció una pista fresca.");
+                AppendLogBufferState(playlistId);
                 return;
             }
 
@@ -272,7 +365,10 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
             MarkPrefetchAttempt(playlistId);
             AppendLog($"precarga iniciada ({playlistId}).");
+            AppendLogBufferState(playlistId);
 
+            // Una pista por playlist: la caché guarda como mucho una por lista,
+            // así que el búfer se llena sumando playlists, no repitiendo la misma.
             if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
             {
                 return;
@@ -293,6 +389,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             string videoId = await PickRandomVideoIdAsync(playlistId, avoid, cancellationToken).ConfigureAwait(false);
             await DownloadAudioAsync(playlistId, videoId, cancellationToken).ConfigureAwait(false);
             AppendLog($"precarga completada ({playlistId}, {Describe(videoId)}).");
+            AppendLogBufferState(playlistId);
         }
         catch (OperationCanceledException)
         {
@@ -336,7 +433,24 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
             throw new InvalidOperationException("La playlist está vacía.");
         }
 
-        var excluded = new HashSet<string>(avoid.Where(id => id is not null).Select(id => id!));
+        var excluded = new HashSet<string>(avoid.Where(id => id is not null).Select(id => id!), StringComparer.Ordinal);
+
+        // La ventana antirrepetición se salta solo si no queda ninguna otra pista:
+        // entonces se repite a propósito y queda anotado en el log.
+        var recent = _history.InWindow(playlistId, TimeSpan.FromDays(NoRepeatDays), DateTime.UtcNow);
+        if (recent.Count > 0)
+        {
+            var window = videos.Where(v => !recent.Contains(v.Id.Value)).ToList();
+            if (window.Count > 0)
+            {
+                excluded.UnionWith(recent);
+            }
+            else
+            {
+                AppendLog($"ventana antirrepetición agotada ({playlistId}): no quedan pistas fuera de los últimos {NoRepeatDays} días; se repite.");
+            }
+        }
+
         var candidates = videos.Where(v => !excluded.Contains(v.Id.Value)).ToList();
         if (candidates.Count == 0)
         {
@@ -421,8 +535,17 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
     public void Dispose() => _youtube.Dispose();
 
-    private static string DefaultCacheDir() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Alarmino", "cache", "youtube");
+    private static string AppDataDir() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Alarmino");
+
+    private static string DefaultCacheDir() => Path.Combine(AppDataDir(), "cache", "youtube");
+
+    /// <summary>Anota el estado del búfer (listas frente al objetivo) en el log.</summary>
+    private void AppendLogBufferState(string? playlistId)
+    {
+        BufferState state = _cache.GetBufferState(TargetBufferCount);
+        AppendLog($"búfer ({playlistId}): {state.Ready}/{state.Target} pistas listas.");
+    }
 
     /// <summary>Identificador legible de una pista para el log.</summary>
     private static string Describe(string? videoId) => string.IsNullOrWhiteSpace(videoId) ? "sin id" : videoId;

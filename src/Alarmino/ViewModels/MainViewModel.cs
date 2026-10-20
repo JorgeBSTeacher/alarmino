@@ -800,7 +800,8 @@ public sealed partial class MainViewModel : ObservableObject
     /// Secuencia de YouTube del arranque, en segundo plano: primero el veredicto
     /// de descarga de cada playlist (solo disco, sin bloquear) y la descarga
     /// forzosa de las que no tienen nada listo; después la sincronización de la
-    /// caché con la lista remota (descarga lo que falte y borra lo que ya no está).
+    /// caché con la lista remota (descarga lo que falte y borra lo que ya no está),
+    /// y por último el barrido de las playlists que ya no usa ninguna alarma.
     /// Si una consulta falla o llega vacía, esa playlist no se toca.
     /// </summary>
     public void SyncYouTubePlaylists() => StartBootYouTubeSequence();
@@ -880,6 +881,31 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Ids de las playlists en uso (las mismas URLs que sincroniza el arranque).
+    /// Devuelve <c>null</c> si alguna URL no es una playlist: sin la lista entera
+    /// no se puede saber qué playlists sobran, y borrar con una lista incompleta
+    /// borraría pistas que sí se usan. Es un fallo cerrado, como los demás.
+    /// </summary>
+    private HashSet<string>? YouTubePlaylistIds()
+    {
+        var urls = YouTubePlaylistUrls().ToArray();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (string url in urls)
+        {
+            string? playlistId = YouTubeAudioResolver.ExtractPlaylistId(url);
+            if (playlistId is null)
+            {
+                return null;
+            }
+
+            ids.Add(playlistId);
+        }
+
+        return ids;
+    }
+
     // ---------- Arranque / parada ----------
 
     public void Initialize()
@@ -902,7 +928,9 @@ public sealed partial class MainViewModel : ObservableObject
         //    nada listo fuerza la descarga de inmediato (la ventana de 30 minutos no
         //    puede dejar una caché vacía al arrancar);
         // 2) después se sincroniza la caché con la playlist remota: descarga lo que
-        //    falte y borra lo que ya no está en la lista.
+        //    falte y borra lo que ya no está en la lista;
+        // 3) por último se barren las playlists que ya no usa ninguna alarma, para
+        //    que no ocupen plazas de la caché ni desalojen una pista necesaria.
         StartBootYouTubeSequence();
     }
 
@@ -926,12 +954,47 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 await CheckBootReadinessAsync(urls).ConfigureAwait(false);
                 await RunYouTubeOperationAsync(_youtube.PrefetchAndSyncAsync, urls).ConfigureAwait(false);
+                RemoveOrphanedPlaylists();
             }
             finally
             {
                 Interlocked.Exchange(ref _prefetchRunning, 0);
             }
         });
+    }
+
+    /// <summary>
+    /// Borra de la caché las playlists que ya no usa ninguna alarma (el usuario
+    /// cambió la alarma de la playlist A a la B y A se quedaba ocupando una de las
+    /// tres plazas de la caché hasta que la purga por antigüedad la desalojara).
+    /// </summary>
+    /// <remarks>
+    /// El barrido es puramente local: solo compara los ids de playlist en uso
+    /// (ajustes y alarmas) con lo guardado, sin consultar la red. No se confunde
+    /// con un fallo de descarga de una playlist que sigue en uso: esa conserva su
+    /// pista, porque su id sigue en el conjunto (de eso ya se encarga el borrado
+    /// por lista remota). Si el conjunto no se puede construir (ninguna URL, o
+    /// alguna que no es una playlist), no se borra nada. Nunca rompe la interfaz.
+    /// </remarks>
+    private void RemoveOrphanedPlaylists()
+    {
+        try
+        {
+            HashSet<string>? usedIds = YouTubePlaylistIds();
+            if (usedIds is null)
+            {
+                // No se pudo reunir la lista completa de playlists en uso: no se
+                // sabe qué sobra, así que no se borra nada (y la caché tampoco).
+                OperationLog.Write("cache", "no se barren playlists abandonadas: la lista de playlists en uso no está disponible.");
+                return;
+            }
+
+            _youtube.RemovePlaylistsNotIn(usedIds);
+        }
+        catch
+        {
+            // El barrido de playlists abandonadas nunca debe romper la aplicación.
+        }
     }
 
     /// <summary>

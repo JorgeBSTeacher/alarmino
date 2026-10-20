@@ -919,6 +919,79 @@ public class YouTubeAudioResolverTests
         }
     }
 
+    [Fact]
+    public void RemovePlaylistsNotIn_prunes_abandoned_playlists_without_any_network_call()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string used = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PLused", "videoA", "m4a"));
+            string abandoned = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PLgone", "videoB", "m4a"));
+            File.WriteAllBytes(used, PlayableBytes());
+            File.WriteAllBytes(abandoned, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PLused", "videoA", used, DateTime.UtcNow);
+            cache.Register("PLgone", "videoB", abandoned, DateTime.UtcNow.AddMinutes(1));
+
+            var probe = new FakeProbe(online: false);
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: probe,
+                // Si el barrido tocara la red, esta consulta haría fallar la prueba.
+                playlistVideoIds: (_, _) => throw new InvalidOperationException("no debe consultarse la red"));
+
+            resolver.RemovePlaylistsNotIn(new HashSet<string> { "PLused" });
+
+            // La poda es local: barre la abandonada sin tocar la red y sin tocar
+            // la playlist que sigue en uso.
+            Assert.Equal(0, probe.Calls);
+            Assert.False(File.Exists(abandoned));
+            Assert.Null(cache.PeekVideoId("PLgone"));
+            Assert.True(File.Exists(used));
+            Assert.Equal("videoA", cache.PeekVideoId("PLused"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void RemovePlaylistsNotIn_with_nothing_in_use_keeps_the_whole_cache()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PLa", "videoA", "m4a"));
+            File.WriteAllBytes(file, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PLa", "videoA", file, DateTime.UtcNow);
+
+            var resolver = new YouTubeAudioResolver(cache: cache, connectivity: new FakeProbe(online: false));
+
+            // Un conjunto vacío es indistinguible de «los ajustes no cargaron»:
+            // la caché entera se queda como está.
+            resolver.RemovePlaylistsNotIn(new HashSet<string>());
+
+            Assert.True(File.Exists(file));
+            Assert.Equal("videoA", cache.PeekVideoId("PLa"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
     /// <summary>Contenido que supera las comprobaciones de integridad de <see cref="TrackSanity"/>.</summary>
     private static byte[] PlayableBytes()
     {

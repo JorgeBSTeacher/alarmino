@@ -2,6 +2,10 @@ using Alarmino.Core.Services;
 
 namespace Alarmino.Tests;
 
+// La comprobación de «no borra nada con un conjunto vacío» mira las últimas
+// líneas del log, que OperationLog guarda en memoria y comparte con el resto de
+// pruebas: se serializa con ellas para que la ventana no se llene por otro lado.
+[Collection("operation-log")]
 public sealed class YouTubeTrackCacheTests : IDisposable
 {
     private readonly string _dir = Path.Combine(
@@ -307,5 +311,115 @@ public sealed class YouTubeTrackCacheTests : IDisposable
 
         Assert.Empty(removed);
         Assert.True(File.Exists(inFlight));
+    }
+
+    [Fact]
+    public void RemovePlaylistsNotIn_removes_an_unreferenced_playlist_and_keeps_the_referenced_one()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string used = CreateFile("PLused", "videoA");
+        string abandoned = CreateFile("PLgone", "videoB");
+        cache.Register("PLused", "videoA", used, DateTime.UtcNow);
+        cache.Register("PLgone", "videoB", abandoned, DateTime.UtcNow.AddMinutes(1));
+
+        IReadOnlyList<string> removed = cache.RemovePlaylistsNotIn(new HashSet<string> { "PLused" });
+
+        Assert.Equal([abandoned], removed);
+        Assert.False(File.Exists(abandoned));
+        Assert.Null(cache.PeekVideoId("PLgone"));
+        Assert.True(File.Exists(used));
+        Assert.Equal("videoA", cache.PeekVideoId("PLused"));
+    }
+
+    [Fact]
+    public void RemovePlaylistsNotIn_refuses_an_empty_allowed_set()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string file = CreateFile("PL1", "videoA");
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+        OperationLog.ResetRoot(Path.Combine(_dir, "logs"));
+
+        // Un conjunto vacío es indistinguible de «los ajustes no cargaron»: la
+        // caché se niega a borrar por su cuenta y lo deja anotado.
+        IReadOnlyList<string> removed = cache.RemovePlaylistsNotIn(new HashSet<string>());
+
+        Assert.Empty(removed);
+        Assert.True(File.Exists(file));
+        Assert.Equal("videoA", cache.PeekVideoId("PL1"));
+        Assert.Contains(
+            OperationLog.RecentLines,
+            line => line.Contains("[cache]") && line.Contains("no se borra nada: no hay ninguna playlist en uso"));
+    }
+
+    [Fact]
+    public void RemovePlaylistsNotIn_never_deletes_a_file_being_written()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+
+        // La descarga en curso usa el nombre de una playlist abandonada, pero
+        // todavía no está terminada: borrarla dejaría la descarga a medias.
+        string inFlight = Path.Combine(_dir, YouTubeTrackCache.BuildFileName("PLgone", "videoB", "m4a"));
+        Directory.CreateDirectory(_dir);
+        File.WriteAllBytes(inFlight, PlayableContent());
+        cache.BeginWrite(inFlight);
+
+        IReadOnlyList<string> removed = cache.RemovePlaylistsNotIn(new HashSet<string> { "PLused" });
+
+        // La descarga en curso se queda: la lista solo trae las rutas borradas.
+        Assert.Empty(removed);
+        Assert.True(File.Exists(inFlight));
+    }
+
+    [Fact]
+    public void RemovePlaylistsNotIn_forgets_the_removed_playlist_in_the_persisted_manifest()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string file = CreateFile("PLgone", "videoB");
+        cache.Register("PLgone", "videoB", file, DateTime.UtcNow);
+
+        cache.RemovePlaylistsNotIn(new HashSet<string> { "PLused" });
+
+        // Al reiniciar, la carpeta ya no tiene nada que recuperar: el manifiesto
+        // también olvidó la playlist.
+        var restarted = new YouTubeTrackCache(_dir);
+        restarted.LoadExisting();
+
+        Assert.False(restarted.IsFresh("PLgone", TimeSpan.FromHours(6), DateTime.UtcNow));
+        Assert.Null(restarted.PeekVideoId("PLgone"));
+        Assert.DoesNotContain("PLgone", File.ReadAllText(Path.Combine(_dir, "manifest.json")));
+    }
+
+    [Fact]
+    public void RemovePlaylistsNotIn_frees_the_budget_so_an_orphan_stops_evicting_a_needed_track()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        var neededFiles = new List<string>();
+
+        // La caché arranca con una playlist que ya no usa ninguna alarma.
+        string abandoned = CreateFile("PLgone", "videoB");
+        cache.Register("PLgone", "videoB", abandoned, DateTime.UtcNow);
+
+        // Al barrerla, su plaza deja de estar ocupada: el índice en memoria baja.
+        cache.RemovePlaylistsNotIn(new HashSet<string> { "PLused", "PLused2", "PLused3" });
+        Assert.Equal(0, cache.GetBufferState(YouTubeTrackCache.MaxTracks).Ready);
+
+        // Con el hueco libre, las playlists en uso caben enteras sin que la
+        // abandonada desplace a la más antigua de las necesarias.
+        DateTime when = DateTime.UtcNow.AddMinutes(1);
+        foreach (string id in new[] { "PLused", "PLused2", "PLused3" })
+        {
+            string file = CreateFile(id, "video" + id);
+            neededFiles.Add(file);
+            cache.Register(id, "video" + id, file, when);
+            when = when.AddMinutes(1);
+        }
+
+        foreach (string file in neededFiles)
+        {
+            Assert.True(File.Exists(file));
+        }
+
+        Assert.Equal(YouTubeTrackCache.MaxTracks, cache.GetBufferState(YouTubeTrackCache.MaxTracks).Ready);
+        Assert.False(File.Exists(abandoned));
     }
 }

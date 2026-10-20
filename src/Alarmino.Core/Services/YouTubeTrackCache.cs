@@ -328,6 +328,89 @@ public sealed class YouTubeTrackCache
         return removed;
     }
 
+    /// <summary>
+    /// Borra las pistas de las playlists que ya no usa ninguna alarma y devuelve
+    /// las rutas retiradas de la caché (vacío si no había nada que borrar). La
+    /// baja del manifiesto es siempre efectiva, aunque el borrado del archivo se
+    /// traguen (queda en uso por una reproducción): el siguiente barrido lo deja.
+    /// <para>
+    /// Solo mira la pertenencia del id de playlist al conjunto de playlists en
+    /// uso (ajustes y alarmas): es un barrido puramente local. NO consulta la red
+    /// ni depende de datos remotos, así que no puede confundirse con un fallo de
+    /// la consulta de una playlist: una playlist que sigue en uso pero cuya
+    /// descarga remota ha fallado se conserva, porque su id sigue en el conjunto.
+    /// El borrado por «este vídeo ya no está en la lista remota» es cosa de
+    /// <see cref="RemoveTracksNotIn"/>.
+    /// </para>
+    /// <para>
+    /// Un <paramref name="allowedPlaylistIds"/> vacío NO borra nada: un conjunto
+    /// vacío es indistinguible de «los ajustes no se pudieron cargar», y ese es
+    /// justo el caso en el que propagar el borrado vaciaría la caché entera.
+    /// La comprobación vive aquí, en la caché, y no en quien llama, para que
+    /// ningún camino futuro pueda borrar por accidente con un conjunto vacío.
+    /// </para>
+    /// <para>
+    /// Tampoco toca un archivo con escritura en curso (<c>BeginWrite</c>): la
+    /// descarga que lo está llenando se registraría luego con un archivo que ya
+    /// no existe. El resto de archivos se intenta borrar igual: la eliminación
+    /// traga el <see cref="IOException"/> y lo deja para el siguiente barrido.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string> RemovePlaylistsNotIn(IReadOnlySet<string> allowedPlaylistIds)
+    {
+        if (allowedPlaylistIds.Count == 0)
+        {
+            AppendLog("no se borra nada: no hay ninguna playlist en uso (no se puede distinguir de unos ajustes sin cargar).");
+            return [];
+        }
+
+        var removed = new List<string>();
+        var blocked = new List<string>();
+
+        lock (_gate)
+        {
+            foreach (string playlistId in _entries.Keys.ToList())
+            {
+                if (allowedPlaylistIds.Contains(playlistId))
+                {
+                    continue;
+                }
+
+                Entry entry = _entries[playlistId];
+                if (_pendingWrites.Contains(entry.FilePath))
+                {
+                    // Se deja fuera del barrido pero sigue en la caché: la descarga
+                    // en curso lo registrará al terminar.
+                    blocked.Add(playlistId);
+                    continue;
+                }
+
+                _entries.Remove(playlistId);
+                removed.Add(entry.FilePath);
+            }
+        }
+
+        foreach (string playlistId in blocked)
+        {
+            AppendLog($"no se borra la pista en curso de la playlist abandonada {playlistId}: la descarga sigue escribiendo.");
+        }
+
+        if (removed.Count > 0)
+        {
+            DeleteFiles(removed);
+            SaveManifest();
+
+            // El nombre del archivo empieza por el id de playlist ("PLx--video.m4a"):
+            // es la traza útil en el log para saber qué se barrió.
+            foreach (string filePath in removed)
+            {
+                AppendLog($"se borra pista de una playlist que ya no usa ninguna alarma: {Path.GetFileName(filePath)}.");
+            }
+        }
+
+        return removed;
+    }
+
     private bool IsPending(string path)
     {
         lock (_gate)

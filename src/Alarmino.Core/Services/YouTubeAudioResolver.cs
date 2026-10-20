@@ -100,6 +100,16 @@ public interface IYouTubeAudioResolver
     Task PrefetchAndSyncAsync(string? playlistUrl, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Barre de la caché las playlists que ya no usa ninguna alarma: el usuario
+    /// cambió una alarma de la playlist A a la B y A se quedaba ocupando una de
+    /// las plazas de la caché. Es un barrido puramente local (solo compara ids de
+    /// playlist, sin tocar la red), así que no se confunde con un fallo de la
+    /// consulta de una playlist que sigue en uso: esa conserva su pista. Un
+    /// conjunto vacío no borra nada. Nunca lanza.
+    /// </summary>
+    void RemovePlaylistsNotIn(IReadOnlySet<string> allowedPlaylistIds);
+
+    /// <summary>
     /// Comprueba al arrancar si cada playlist configurada tiene algo descargado
     /// para la próxima alarma. Devuelve un veredicto por playlist con cuántas
     /// pistas hay listas y el objetivo del búfer, y registra una línea por
@@ -399,6 +409,24 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
     /// <summary>True si ya toca volver a intentar la precarga de esa playlist.</summary>
     public bool IsPrefetchDue(string playlistId) => IsPrefetchDueCore(playlistId);
+
+    /// <summary>
+    /// Barre de la caché las playlists que no están en <paramref name="allowedPlaylistIds"/>.
+    /// No consulta la red: es una poda local de lo que ya hay en disco, ajena a los
+    /// datos remotos (y por tanto incapaz de borrar por un fallo de consulta). No
+    /// lanza: un fallo del barrido deja la caché intacta.
+    /// </summary>
+    public void RemovePlaylistsNotIn(IReadOnlySet<string> allowedPlaylistIds)
+    {
+        try
+        {
+            _cache.RemovePlaylistsNotIn(allowedPlaylistIds);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"barrido de playlists abandonadas fallido: {ex.Message}");
+        }
+    }
 
     /// <summary>
     /// Sincroniza la caché de una playlist con la lista remota, en segundo plano:

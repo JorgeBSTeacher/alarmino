@@ -66,13 +66,64 @@ public sealed partial class AlarmEditorViewModel : ObservableObject
 
     public string TimeText { get; set; }
 
-    public bool DayMonday { get => _days[0]; set { _days[0] = value; ValidateRequired(); } }
-    public bool DayTuesday { get => _days[1]; set { _days[1] = value; ValidateRequired(); } }
-    public bool DayWednesday { get => _days[2]; set { _days[2] = value; ValidateRequired(); } }
-    public bool DayThursday { get => _days[3]; set { _days[3] = value; ValidateRequired(); } }
-    public bool DayFriday { get => _days[4]; set { _days[4] = value; ValidateRequired(); } }
-    public bool DaySaturday { get => _days[5]; set { _days[5] = value; ValidateRequired(); } }
-    public bool DaySunday { get => _days[6]; set { _days[6] = value; ValidateRequired(); } }
+    public bool DayMonday
+    {
+        get => _days[0];
+        set => SetDay(0, value, nameof(DayMonday));
+    }
+
+    public bool DayTuesday
+    {
+        get => _days[1];
+        set => SetDay(1, value, nameof(DayTuesday));
+    }
+
+    public bool DayWednesday
+    {
+        get => _days[2];
+        set => SetDay(2, value, nameof(DayWednesday));
+    }
+
+    public bool DayThursday
+    {
+        get => _days[3];
+        set => SetDay(3, value, nameof(DayThursday));
+    }
+
+    public bool DayFriday
+    {
+        get => _days[4];
+        set => SetDay(4, value, nameof(DayFriday));
+    }
+
+    public bool DaySaturday
+    {
+        get => _days[5];
+        set => SetDay(5, value, nameof(DaySaturday));
+    }
+
+    public bool DaySunday
+    {
+        get => _days[6];
+        set => SetDay(6, value, nameof(DaySunday));
+    }
+
+    /// <summary>
+    /// Actualiza un día y notifica el cambio. Sin el OnPropertyChanged el
+    /// CheckBox cambia su estado interno pero la ventana reabierta muestra el
+    /// valor antiguo, y el botón queda desincronizado respecto al modelo.
+    /// </summary>
+    private void SetDay(int index, bool value, string propertyName)
+    {
+        if (_days[index] == value)
+        {
+            return;
+        }
+
+        _days[index] = value;
+        OnPropertyChanged(propertyName);
+        ValidateRequired();
+    }
 
     public bool UsePreset
     {

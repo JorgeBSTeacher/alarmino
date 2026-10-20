@@ -799,10 +799,56 @@ public sealed partial class MainViewModel : ObservableObject
             AutostartService.SetEnabled(true, _startVisible);
         }
 
+        EnsureOfflineFallback();
+
         _timer.Start();
 
         // A la hora de tocar ya debe haber una pista descargada.
         PrefetchYouTube();
+    }
+
+    /// <summary>
+    /// El MP3 de respaldo por defecto es null, así que sin conexión la alarma
+    /// quedaría en silencio. Al arrancar se asegura uno: si el ajuste está vacío
+    /// o el archivo ya no existe, se elige un sonido predeterminado válido y se
+    /// persiste. Si no hay ningún candidato, se registra y se deja null.
+    /// </summary>
+    private void EnsureOfflineFallback()
+    {
+        // Los sonidos predeterminados van embebidos: se materializan primero en
+        // la biblioteca (sounds\presets) para poder apuntarlos como respaldo.
+        SoundLibrary library = _store.SoundLibrary;
+        library.EnsureDefaultPresets();
+
+        var candidates = new List<string>();
+        foreach (var preset in SoundPresets.All)
+        {
+            string? overrideFile = SoundPresets.ResolveFilePath(preset.Id, _settings.PresetOverrides);
+            if (!string.IsNullOrWhiteSpace(overrideFile))
+            {
+                candidates.Add(overrideFile);
+            }
+        }
+
+        candidates.Add(library.PresetsDirectory);
+
+        string? chosen = OfflineFallbackSelector.Select(
+            _settings.OfflineFallbackFilePath, candidates, out IReadOnlyList<string> examined);
+
+        if (chosen is null || chosen == _settings.OfflineFallbackFilePath)
+        {
+            if (chosen is null)
+            {
+                OperationLog.Write("arranque", $"sin respaldo sin conexión; examinados: {string.Join(", ", examined)}");
+            }
+
+            return;
+        }
+
+        _settings.OfflineFallbackFilePath = chosen;
+        PersistSettings();
+        OnPropertyChanged(nameof(OfflineFallbackFilePathDisplay));
+        OperationLog.Write("arranque", $"respaldo sin conexión establecido: {chosen}");
     }
 
     public void AttachTrayIcon(TrayIconService tray) => _tray = tray;

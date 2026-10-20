@@ -1,6 +1,7 @@
 using System.IO;
 using Alarmino.Core.Models;
 using Alarmino.Core.Services;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
 namespace Alarmino.Services;
@@ -16,6 +17,7 @@ public sealed class AudioService : IDisposable
     private readonly Func<string, string?> _resolvePresetFile;
     private readonly IYouTubeAudioResolver? _youtube;
     private readonly Func<string?>? _resolveFallbackFile;
+    private readonly Func<WaveFormat?> _resolveDeviceFormat;
     private WaveOutEvent? _current;
     private CancellationTokenSource? _cts;
     private string? _playingPlaylistUrl;
@@ -25,12 +27,14 @@ public sealed class AudioService : IDisposable
         SoundLibrary? library = null,
         Func<string, string?>? resolvePresetFile = null,
         IYouTubeAudioResolver? youtube = null,
-        Func<string?>? resolveFallbackFile = null)
+        Func<string?>? resolveFallbackFile = null,
+        Func<WaveFormat?>? resolveDeviceFormat = null)
     {
         _library = library ?? new SoundLibrary();
         _resolvePresetFile = resolvePresetFile ?? (_ => null);
         _youtube = youtube;
         _resolveFallbackFile = resolveFallbackFile;
+        _resolveDeviceFormat = resolveDeviceFormat ?? DefaultDeviceFormat;
 
         // Los tres sonidos predeterminados vienen con la app y se copian a la
         // biblioteca la primera vez, para queResolvePresetFile los encuentre.
@@ -166,8 +170,29 @@ public sealed class AudioService : IDisposable
                 source = new FadeOutWaveStream(source, 5);
             }
 
+            // La fuente ya está completa (recorte y desvanecimiento incluidos).
+            // El remuestreo va ENVOLVIENDO ese resultado final: la fuente y sus
+            // envoltorios siguen en el formato original (PCM de 16 bits), de modo
+            // que el recorte y el fade calculan bien los segundos, y lo que recibe
+            // el dispositivo ya está en su frecuencia, garantizando 1.0x.
+            IDisposable? resampler = null;
+            IWaveProvider provider = source;
+            WaveFormat? deviceFormat = _resolveDeviceFormat();
+            if (deviceFormat is not null
+                && PlaybackFormatSelector.NeedsResampling(source.WaveFormat, deviceFormat.SampleRate, deviceFormat.Channels))
+            {
+                WaveFormat target = PlaybackFormatSelector.ComputeTargetFormat(
+                    source.WaveFormat, deviceFormat.SampleRate, deviceFormat.Channels);
+                var resampled = new MediaFoundationResampler(source, target);
+                resampler = resampled;
+                provider = resampled;
+                OperationLog.Write("audio",
+                    $"se convierte el audio de {source.WaveFormat.SampleRate} Hz/{source.WaveFormat.Channels} canales " +
+                    $"a {target.SampleRate} Hz/{target.Channels} canales para sonar a velocidad normal.");
+            }
+
             var output = new WaveOutEvent();
-            output.Init(source);
+            output.Init(provider);
             output.Volume = Math.Clamp(request.VolumePercent / 100f, 0f, 1f);
             output.PlaybackStopped += (_, args) =>
             {
@@ -185,6 +210,9 @@ public sealed class AudioService : IDisposable
                 }
 
                 output.Dispose();
+                // El remuestreador envuelve a la fuente, pero NAudio no lo encadena
+                // a su Dispose: hay que liberar ambos (y sin doble liberación).
+                resampler?.Dispose();
                 source.Dispose();
                 completion.TrySetResult(true);
             };
@@ -226,6 +254,28 @@ public sealed class AudioService : IDisposable
         catch (Exception ex)
         {
             OperationLog.Write("audio", $"no se pudo registrar la reproducción ({ex.Message}).");
+        }
+    }
+
+    /// <summary>
+    /// Formato del dispositivo de salida predeterminado (frecuencia y canales).
+    /// Se consulta a WASAPI, que es la frecuencia a la que corre el motor de audio
+    /// compartido de Windows. Si algo falla, devuelve <c>null</c> y la reproducción
+    /// continúa sin conversión (se comporta como antes, nunca peor).
+    /// </summary>
+    private static WaveFormat? DefaultDeviceFormat()
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using MMDevice device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            WaveFormat mix = device.AudioClient.MixFormat;
+            return new WaveFormat(mix.SampleRate, mix.BitsPerSample, mix.Channels);
+        }
+        catch (Exception ex)
+        {
+            OperationLog.Write("audio", $"no se pudo consultar el formato del dispositivo ({ex.Message}); se reproduce sin conversión.");
+            return null;
         }
     }
 

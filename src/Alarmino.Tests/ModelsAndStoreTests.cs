@@ -663,6 +663,271 @@ public class YouTubeAudioResolverTests
 
         Assert.Equal(0, resolver.NoRepeatDays);
     }
+
+    [Fact]
+    public async Task Sync_without_a_valid_playlist_url_does_nothing()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var probe = new FakeProbe(online: true);
+            var cache = new YouTubeTrackCache(dir);
+            var resolver = new YouTubeAudioResolver(cache: cache, connectivity: probe);
+
+            await resolver.PrefetchAndSyncAsync(null);
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+
+            // Sin playlist no se consulta la red ni se toca nada.
+            Assert.Equal(0, probe.Calls);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Sync_offline_never_reaches_the_remote_list()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL123abc", "videoA", "m4a"));
+            File.WriteAllBytes(file, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", file, DateTime.UtcNow);
+
+            var probe = new FakeProbe(online: false);
+            var resolver = new YouTubeAudioResolver(cache: cache, connectivity: probe);
+
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            // Sin conexión no hay lista remota fiable: la pista se queda donde está.
+            Assert.True(File.Exists(file));
+            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("throws")]
+    [InlineData("timesout")]
+    [InlineData("cancelled")]
+    public async Task Sync_keeps_the_cache_untouched_when_the_remote_list_is_unusable(string failure)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL123abc", "videoA", "m4a"));
+            File.WriteAllBytes(file, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", file, DateTime.UtcNow);
+
+            // La playlist remota ya no contiene videoA: si la consulta se tomara
+            // como buena, la pista se borraría. Ninguno de estos fallos lo permite.
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => failure switch
+                {
+                    "throws" => Task.FromException<PlaylistSnapshot>(new InvalidOperationException("red caída")),
+                    "timesout" => Task.FromException<PlaylistSnapshot>(new TimeoutException("la consulta agotó el tiempo")),
+                    "cancelled" => Task.FromCanceled<PlaylistSnapshot>(new CancellationToken(canceled: true)),
+                    _ => Task.FromResult(new PlaylistSnapshot([], 0)),
+                });
+
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            // Un fallo de consulta NUNCA puede vaciar la caché del usuario.
+            Assert.True(File.Exists(file));
+            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Sync_deletes_a_track_that_left_a_playlist_shorter_than_the_read_cap()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL123abc", "videoA", "m4a"));
+            File.WriteAllBytes(file, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", file, DateTime.UtcNow);
+
+            // Playlist corta (3 vídeos) leída entera (3 de 3): YouTube declara el
+            // total y coincide con lo leído, así que la lista es completa y videoA,
+            // ausente de ella, se propaga como borrado.
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(
+                    new PlaylistSnapshot(["videoB", "videoC", "videoD"], 3)));
+
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            Assert.False(File.Exists(file));
+            Assert.Null(cache.PeekVideoId("PL123abc"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Sync_deletes_a_track_that_left_the_remote_playlist()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL123abc", "videoA", "m4a"));
+            File.WriteAllBytes(file, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", file, DateTime.UtcNow);
+
+            // La consulta se completa con la lista entera y videoA ya no está:
+            // ese es el único caso en el que se propaga el borrado.
+            var remote = Enumerable.Range(0, YouTubeAudioResolver.MaxPlaylistItems)
+                .Select(i => $"video{i}")
+                .ToList();
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(
+                    new PlaylistSnapshot(remote, YouTubeAudioResolver.MaxPlaylistItems)));
+
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            Assert.False(File.Exists(file));
+            Assert.Null(cache.PeekVideoId("PL123abc"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Sync_larger_than_the_read_cap_deletes_nothing()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL123abc", "videoA", "m4a"));
+            File.WriteAllBytes(file, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", file, DateTime.UtcNow);
+
+            // Playlist de 500 vídeos declarados: supera el tope de lectura, así que
+            // no se puede saber con certeza qué quedó fuera y no se borra nada.
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(
+                    new PlaylistSnapshot(
+                        Enumerable.Range(0, YouTubeAudioResolver.MaxPlaylistItems).Select(i => $"video{i}").ToList(),
+                        500)));
+
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            Assert.True(File.Exists(file));
+            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+            Assert.Contains(
+                OperationLog.RecentLines,
+                line => line.Contains("sincronización pospuesta") && line.Contains("límite"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("truncated")]
+    [InlineData("zero")]
+    public async Task Sync_keeps_the_cache_untouched_when_the_read_is_incomplete(string reason)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL123abc", "videoA", "m4a"));
+            File.WriteAllBytes(file, PlayableBytes());
+
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", file, DateTime.UtcNow);
+
+            // "truncated": YouTube declara 400 vídeos pero la lectura se cortó antes.
+            // "zero": YouTube no declara ningún total, así que no se sabe si falta algo.
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(reason switch
+                {
+                    "truncated" => new PlaylistSnapshot(["videoB", "videoC"], 400),
+                    _ => new PlaylistSnapshot(["videoB", "videoC"], 0),
+                }));
+
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            Assert.True(File.Exists(file));
+            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>Contenido que supera las comprobaciones de integridad de <see cref="TrackSanity"/>.</summary>
+    private static byte[] PlayableBytes()
+    {
+        byte[] data = new byte[40 * 1024];
+        data[0] = 0xFF;
+        data[1] = 0xFB;
+        data[2] = 0xA0;
+        return data;
+    }
 }
 
 public class SoundPresetsTests

@@ -1,15 +1,28 @@
 using System.Text.RegularExpressions;
 using YoutubeExplode;
 using YoutubeExplode.Common;
+using YoutubeExplode.Playlists;
 using YoutubeExplode.Videos.Streams;
 
 namespace Alarmino.Core.Services;
+
+/// <summary>
+/// Foto de una playlist remota en un momento dado: los ids de vídeo leídos y el
+/// total de vídeos que YouTube declara para la lista. El total es lo que permite
+/// distinguir una lista leída entera (los dos números coinciden) de una lectura
+/// truncada (se leyeron menos de los declarados): solo la primera autoriza a
+/// borrar pistas locales.
+/// </summary>
+/// <param name="VideoIds">Ids de los vídeos leídos, en el orden de YouTube.</param>
+/// <param name="DeclaredCount">Total de vídeos declarado por YouTube; 0 si no lo declara.</param>
+public readonly record struct PlaylistSnapshot(IReadOnlyList<string> VideoIds, int DeclaredCount);
 
 /// <summary>Comprueba si hay conectividad con Internet (y con YouTube en particular).</summary>
 public interface IConnectivityProbe
 {
     Task<bool> IsOnlineAsync();
 }
+
 
 /// <summary>
 /// Comprueba la conectividad consultando un endpoint ligero de YouTube con un
@@ -77,6 +90,14 @@ public interface IYouTubeAudioResolver
     Task PrefetchAsync(string? playlistUrl, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sincroniza en segundo plano la caché de una playlist con la lista remota:
+    /// rellena el búfer con lo que falte y borra las pistas que ya no están en la
+    /// playlist. Si la consulta a la playlist falla, se agota el tiempo, se
+    /// cancela o devuelve una lista vacía, la caché queda intacta. Nunca lanza.
+    /// </summary>
+    Task PrefetchAndSyncAsync(string? playlistUrl, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Anota que una pista empezó a reproducirse de verdad (para la ventana
     /// antirrepetición). Es "best-effort": nunca lanza. Con <paramref name="videoId"/>
     /// nulo se usa el último id resuelto (<see cref="YouTubeAudioResolver.LastVideoId"/>).
@@ -88,8 +109,13 @@ public interface IYouTubeAudioResolver
 public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 {
     private static readonly string[] PlayableContainers = ["mp4", "m4a", "mp3", "aac", "wav"];
-    private const int MaxPlaylistItems = 300;
-
+    /// <summary>
+    /// Tope de vídeos que se enumeran de una playlist (tanto al elegir una pista
+    /// como al leer la lista para sincronizar). No es una señal de completitud: para
+    /// saber si la lectura quedó entera se compara lo leído con el total que
+    /// declara YouTube (<see cref="PlaylistSnapshot.DeclaredCount"/>).
+    /// </summary>
+    public const int MaxPlaylistItems = 300;
     /// <summary>Tiempo mínimo entre dos descargas de precarga de la misma playlist.</summary>
     private static readonly TimeSpan MinPrefetchInterval = TimeSpan.FromMinutes(30);
 
@@ -107,6 +133,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
     private readonly IConnectivityProbe _connectivity;
     private readonly YoutubeClient _youtube = new();
     private readonly PlayHistoryStore _history;
+    private readonly Func<string, CancellationToken, Task<PlaylistSnapshot>> _playlistVideoIds;
     private readonly SemaphoreSlim _prefetchGate = new(1, 1);
     private readonly object _attemptsGate = new();
     private readonly Dictionary<string, DateTime> _lastPrefetchUtc = new(StringComparer.Ordinal);
@@ -138,11 +165,13 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         string? cacheDir = null,
         IConnectivityProbe? connectivity = null,
         YouTubeTrackCache? cache = null,
-        PlayHistoryStore? history = null)
+        PlayHistoryStore? history = null,
+        Func<string, CancellationToken, Task<PlaylistSnapshot>>? playlistVideoIds = null)
     {
         _cache = cache ?? new YouTubeTrackCache(cacheDir ?? DefaultCacheDir());
         _connectivity = connectivity ?? new ConnectivityProbe();
         _history = history ?? new PlayHistoryStore(AppDataDir());
+        _playlistVideoIds = playlistVideoIds ?? FetchPlaylistVideoIdsAsync;
 
         // Las pistas ya descargadas en sesiones anteriores sirven tal cual.
         _cache.LoadExisting();
@@ -303,9 +332,202 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         }
     }
 
+    public async Task PrefetchAndSyncAsync(string? playlistUrl, CancellationToken cancellationToken = default)
+    {
+        await PrefetchAndSyncCoreAsync(playlistUrl, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task PrefetchAsync(string? playlistUrl, CancellationToken cancellationToken = default)
     {
         await PrefetchCoreAsync(playlistUrl, force: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sincroniza la caché de una playlist con la lista remota, en segundo plano:
+    /// primero rellena el búfer con lo que falte y después borra lo que ya no
+    /// está en la playlist. Nunca lanza: los fallos de la descarga remota dejan
+    /// la caché intacta.
+    /// </summary>
+    private async Task PrefetchAndSyncCoreAsync(string? playlistUrl, CancellationToken cancellationToken)
+    {
+        // La caché y el historial se indexan por id de playlist, no por URL: hay
+        // que extraerlo aquí o el barrido buscaría una playlist con la URL como
+        // nombre y no encontraría nada que borrar.
+        string? playlistId = ExtractPlaylistId(playlistUrl ?? string.Empty);
+        if (playlistId is null)
+        {
+            return;
+        }
+
+        // Bajo el mismo pestillo que la precarga: este barrido incluye una
+        // descarga y no debe solaparse con otra (ni con una precarga en curso).
+        if (!await _prefetchGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            AppendLog($"sincronización omitida ({playlistId}): ya hay otra descarga o barrido en curso.");
+            return;
+        }
+
+        try
+        {
+            await PrefetchCoreAsync(playlistUrl, force: false, CancellationToken.None).ConfigureAwait(false);
+            await PropagateDeletionsAsync(playlistId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"sincronización fallida ({playlistUrl}): {ex.Message}");
+        }
+        finally
+        {
+            _prefetchGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Borra de la caché las pistas que ya no están en la lista remota. Solo borra
+    /// cuando la lectura es completa de verdad: se leyeron al menos tantos vídeos
+    /// como declara YouTube y ese total es mayor que cero. Si la consulta falla, se
+    /// agota el tiempo, se cancela, llega vacía o llega truncada, no se toca nada:
+    /// un fallo de red no puede vaciar la caché del usuario.
+    /// </summary>
+    private async Task PropagateDeletionsAsync(string playlistId, CancellationToken cancellationToken)
+    {
+        PlaylistSnapshot remote;
+        try
+        {
+            remote = await _playlistVideoIds(playlistId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog($"sincronización pospuesta ({playlistId}): la consulta se canceló; no se borra nada.");
+            return;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"sincronización pospuesta ({playlistId}): la consulta falló ({ex.Message}); no se borra nada.");
+            return;
+        }
+
+        // Una lista completa nunca llega vacía; si llega, la consulta se quedó a
+        // medias. Tratarla como «la playlist no tiene nada» borraría la caché:
+        // se corta antes de tocar nada (la caché también se negaría por su cuenta).
+        if (remote.VideoIds.Count == 0)
+        {
+            AppendLog($"sincronización pospuesta ({playlistId}): la lista remota llegó vacía; no se borra nada.");
+            return;
+        }
+
+        // Sin total declarado no se sabe si falta algo por leer: sin esa certeza no
+        // se borra. Los vídeos mezclados («mixes») no declaran total.
+        if (remote.DeclaredCount <= 0)
+        {
+            AppendLog(
+                $"sincronización pospuesta ({playlistId}): YouTube no declara el total de la lista; " +
+                "no se puede comprobar si está completa; no se borra nada.");
+            return;
+        }
+
+        // El total declarado supera el tope de lectura: la lista es más grande de lo
+        // que se puede enumerar entera, así que siempre faltarían vídeos por leer.
+        if (remote.DeclaredCount > MaxPlaylistItems)
+        {
+            AppendLog(
+                $"sincronización pospuesta ({playlistId}): la lista declara {remote.DeclaredCount} vídeo(s), " +
+                $"por encima del límite de {MaxPlaylistItems} que se puede leer; no se borra nada.");
+            return;
+        }
+
+        // Se leyó menos de lo que YouTube declara: respuesta incompleta, no un borrado.
+        if (remote.VideoIds.Count < remote.DeclaredCount)
+        {
+            AppendLog(
+                $"sincronización pospuesta ({playlistId}): se leyeron {remote.VideoIds.Count} de " +
+                $"{remote.DeclaredCount} vídeo(s) declarados; lectura incompleta; no se borra nada.");
+            return;
+        }
+
+        IReadOnlyList<string> removed = _cache.RemoveTracksNotIn(
+            playlistId,
+            new HashSet<string>(remote.VideoIds, StringComparer.Ordinal));
+        if (removed.Count > 0)
+        {
+            AppendLog($"sincronización completada ({playlistId}): {removed.Count} pista(s) borrada(s) por ya no estar en la playlist.");
+        }
+        else
+        {
+            AppendLog($"sincronización completada ({playlistId}): nada que borrar.");
+        }
+    }
+
+    /// <summary>
+    /// Foto de la playlist remota: los ids de los vídeos leídos (hasta
+    /// <see cref="MaxPlaylistItems"/>) y el total que declara YouTube, que es lo que
+    /// decide si la lectura quedó completa.
+    /// </summary>
+    private async Task<PlaylistSnapshot> FetchPlaylistVideoIdsAsync(string playlistId, CancellationToken cancellationToken)
+    {
+        Playlist playlist = await _youtube.Playlists
+            .GetAsync(playlistId, cancellationToken)
+            .ConfigureAwait(false);
+
+        var videos = await _youtube.Playlists
+            .GetVideosAsync(playlistId, cancellationToken)
+            .CollectAsync(MaxPlaylistItems)
+            .ConfigureAwait(false);
+
+        return new PlaylistSnapshot(videos.Select(v => v.Id.Value).ToList(), playlist.Count ?? 0);
+    }
+
+
+    /// <summary>
+    /// Lista completa de ids de la playlist remota, o <c>null</c> si la consulta
+    /// falla, se agota el tiempo, se cancela o devuelve una lista vacía. Es el
+    /// dato con el que un llamador decide qué borrar: <c>null</c> significa
+    /// «no se sabe», nunca «no hay nada». Solo para diagnóstico (vista de logs).
+    /// </summary>
+    public async Task<IReadOnlyList<string>?> TryFetchPlaylistVideoIdsAsync(string? playlistUrl, CancellationToken cancellationToken = default)
+    {
+        string? playlistId = ExtractPlaylistId(playlistUrl ?? string.Empty);
+        if (playlistId is null)
+        {
+            AppendLog($"consulta de playlist omitida: URL no válida ({playlistUrl}).");
+            return null;
+        }
+
+        try
+        {
+            PlaylistSnapshot snapshot = await _playlistVideoIds(playlistId, cancellationToken).ConfigureAwait(false);
+            if (snapshot.VideoIds.Count == 0)
+            {
+                AppendLog($"consulta de playlist ({playlistId}): llegó vacía.");
+                return null;
+            }
+
+            if (snapshot.DeclaredCount > 0 && snapshot.VideoIds.Count < snapshot.DeclaredCount)
+            {
+                AppendLog(
+                    $"consulta de playlist ({playlistId}): {snapshot.VideoIds.Count} de " +
+                    $"{snapshot.DeclaredCount} vídeo(s) declarados; lectura incompleta.");
+            }
+            else
+            {
+                AppendLog($"consulta de playlist ({playlistId}): {snapshot.VideoIds.Count} vídeo(s).");
+            }
+
+            return snapshot.VideoIds;
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog($"consulta de playlist ({playlistId}): cancelada.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"consulta de playlist ({playlistId}): falló ({ex.Message}).");
+            return null;
+        }
     }
 
     /// <summary>

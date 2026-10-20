@@ -211,4 +211,101 @@ public sealed class YouTubeTrackCacheTests : IDisposable
         Assert.False(File.Exists(junk));
         Assert.False(cache.TryTake("PL1", out _, out _));
     }
+
+    [Fact]
+    public void RemoveTracksNotIn_refuses_an_empty_allowed_set()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string file = CreateFile("PL1", "videoA");
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+
+        // Un conjunto vacío es indistinguible de «la descarga devolvió nada»:
+        // la caché se niega a borrar nada por su cuenta y lo deja anotado.
+        IReadOnlyList<string> removed = cache.RemoveTracksNotIn("PL1", new HashSet<string>());
+
+        Assert.Empty(removed);
+        Assert.True(File.Exists(file));
+        Assert.True(cache.IsFresh("PL1", TimeSpan.FromHours(6), DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void RemoveTracksNotIn_removes_a_track_missing_from_the_remote_list()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string file = CreateFile("PL1", "videoA");
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+
+        IReadOnlyList<string> removed = cache.RemoveTracksNotIn("PL1", new HashSet<string> { "videoB" });
+
+        Assert.Equal([file], removed);
+        Assert.False(File.Exists(file));
+        Assert.False(cache.IsFresh("PL1", TimeSpan.FromHours(6), DateTime.UtcNow));
+        Assert.Null(cache.PeekVideoId("PL1"));
+    }
+
+    [Fact]
+    public void RemoveTracksNotIn_keeps_a_track_still_present_remotely()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string file = CreateFile("PL1", "videoA");
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+
+        IReadOnlyList<string> removed = cache.RemoveTracksNotIn("PL1", new HashSet<string> { "videoA", "videoB" });
+
+        Assert.Empty(removed);
+        Assert.True(File.Exists(file));
+        Assert.Equal("videoA", cache.PeekVideoId("PL1"));
+    }
+
+    [Fact]
+    public void RemoveTracksNotIn_forgets_the_track_in_the_persisted_manifest()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string file = CreateFile("PL1", "videoA");
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+
+        cache.RemoveTracksNotIn("PL1", new HashSet<string> { "videoB" });
+
+        var restarted = new YouTubeTrackCache(_dir);
+        restarted.LoadExisting();
+
+        Assert.False(restarted.IsFresh("PL1", TimeSpan.FromHours(6), DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void RemoveTracksNotIn_touches_only_the_given_playlist()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string first = CreateFile("PL1", "videoA");
+        string second = CreateFile("PL2", "videoB");
+        cache.Register("PL1", "videoA", first, DateTime.UtcNow);
+        cache.Register("PL2", "videoB", second, DateTime.UtcNow);
+
+        IReadOnlyList<string> removed = cache.RemoveTracksNotIn("PL1", new HashSet<string> { "videoC" });
+
+        Assert.Equal([first], removed);
+        Assert.False(File.Exists(first));
+        Assert.Equal("videoB", cache.PeekVideoId("PL2"));
+        // La otra playlist conserva su pista en el manifiesto (el archivo lo borra
+        // la purga de huérfanos preexistente de Register, ajena a este borrado).
+        Assert.Contains("PL2", File.ReadAllText(Path.Combine(_dir, "manifest.json")));
+    }
+
+    [Fact]
+    public void RemoveTracksNotIn_never_deletes_a_file_being_written()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+
+        // La descarga en curso usa el mismo nombre que el registro de la playlist,
+        // pero todavía no está terminada: borrarla dejaría la descarga a medias.
+        string inFlight = Path.Combine(_dir, YouTubeTrackCache.BuildFileName("PL1", "videoA", "m4a"));
+        Directory.CreateDirectory(_dir);
+        File.WriteAllBytes(inFlight, PlayableContent());
+        cache.BeginWrite(inFlight);
+
+        IReadOnlyList<string> removed = cache.RemoveTracksNotIn("PL1", new HashSet<string> { "videoB" });
+
+        Assert.Empty(removed);
+        Assert.True(File.Exists(inFlight));
+    }
 }

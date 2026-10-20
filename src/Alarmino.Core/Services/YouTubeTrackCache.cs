@@ -258,6 +258,76 @@ public sealed class YouTubeTrackCache
         }
     }
 
+    /// <summary>
+    /// Borra la pista de una playlist si su vídeo ya no está en la lista remota.
+    /// Devuelve las rutas realmente retiradas de la caché (vacío si no había
+    /// nada que borrar).
+    /// <para>
+    /// Un <paramref name="allowedVideoIds"/> vacío NO borra nada: un conjunto
+    /// vacío es indistinguible de «la consulta a la playlist devolvió cero
+    /// vídeos» (fallo de red, lista privada, respuesta truncada), y ese es
+    /// justo el caso en el que propagar el borrado vaciaría la caché entera.
+    /// La comprobación vive aquí, en la caché, y no en quien llama, para que
+    /// ningún camino futuro pueda borrar por accidente con una lista vacía:
+    /// el único punto que borra es este y se niega por sí mismo.
+    /// </para>
+    /// <para>
+    /// Tampoco toca un archivo con escritura en curso (<c>BeginWrite</c>): la
+    /// descarga que lo está llenando se registraría luego con un archivo que ya
+    /// no existe. Un archivo en uso por la reproducción se intenta borrar igual:
+    /// la eliminación traga el <see cref="IOException"/> y lo deja para el
+    /// siguiente barrido.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string> RemoveTracksNotIn(string playlistId, IReadOnlySet<string> allowedVideoIds)
+    {
+        if (string.IsNullOrWhiteSpace(playlistId))
+        {
+            return [];
+        }
+
+        if (allowedVideoIds.Count == 0)
+        {
+            AppendLog($"no se borra nada de {playlistId}: la lista remota llegó vacía (no se puede distinguir de un fallo).");
+            return [];
+        }
+
+        var removed = new List<string>();
+        bool changed = false;
+
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(playlistId, out var entry))
+            {
+                return [];
+            }
+
+            if (allowedVideoIds.Contains(entry.VideoId))
+            {
+                return [];
+            }
+
+            if (_pendingWrites.Contains(entry.FilePath))
+            {
+                AppendLog($"no se borra la pista en curso de {playlistId}: la descarga sigue escribiendo {Path.GetFileName(entry.FilePath)}.");
+                return [];
+            }
+
+            _entries.Remove(playlistId);
+            removed.Add(entry.FilePath);
+            changed = true;
+        }
+
+        if (changed)
+        {
+            DeleteFiles(removed);
+            SaveManifest();
+            AppendLog($"se borra pista que ya no está en la playlist ({playlistId}): {Path.GetFileName(removed[0])}.");
+        }
+
+        return removed;
+    }
+
     private bool IsPending(string path)
     {
         lock (_gate)

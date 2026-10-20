@@ -794,26 +794,41 @@ public sealed partial class MainViewModel : ObservableObject
     /// que las alarmas con sonido de YouTube empiecen a su hora. La propia
     /// descarga se descarta si ya hay una pista reciente o si no hay conexión.
     /// </summary>
-    public void PrefetchYouTube()
+    public void PrefetchYouTube() => RunYouTubeBackground(_youtube.PrefetchAsync);
+
+    /// <summary>
+    /// Sincroniza en segundo plano todas las playlists de YouTube configuradas:
+    /// descarga lo que falte y borra lo que ya no está en la lista remota. Si una
+    /// consulta falla o llega vacía, esa playlist no se toca.
+    /// </summary>
+    public void SyncYouTubePlaylists() => RunYouTubeBackground(_youtube.PrefetchAndSyncAsync);
+
+    /// <summary>
+    /// Ejecuta una operación de YouTube sobre cada playlist configurada en un
+    /// hilo de fondo. Como mucho una operación a la vez: las llamadas repetidas
+    /// se ignoran, y ningún fallo llega a la interfaz.
+    /// </summary>
+    private void RunYouTubeBackground(Func<string?, CancellationToken, Task> operation)
     {
-        // Como mucho una precarga en marcha: las llamadas repetidas se ignoran.
+        // Como mucho una operación en marcha: las llamadas repetidas se ignoran.
         if (Interlocked.Exchange(ref _prefetchRunning, 1) == 1)
         {
             return;
         }
 
+        string[] urls = YouTubePlaylistUrls().ToArray();
         _ = Task.Run(async () =>
         {
             try
             {
-                foreach (string url in YouTubePlaylistUrls())
+                foreach (string url in urls)
                 {
-                    await _youtube.PrefetchAsync(url);
+                    await operation(url, CancellationToken.None);
                 }
             }
             catch
             {
-                // La precarga nunca debe romper la aplicación.
+                // La operación nunca debe romper la aplicación.
             }
             finally
             {
@@ -865,8 +880,11 @@ public sealed partial class MainViewModel : ObservableObject
 
         _timer.Start();
 
-        // A la hora de tocar ya debe haber una pista descargada.
-        PrefetchYouTube();
+        // Al encender el equipo se sincroniza la caché con la playlist remota:
+        // descarga lo que falte y borra lo que ya no está en la lista. Se hace
+        // antes de la precarga porque comparte pestillo con ella (si la precarga
+        // arranca primero, la sincronización se omite en este barrido).
+        SyncYouTubePlaylists();
     }
 
     /// <summary>

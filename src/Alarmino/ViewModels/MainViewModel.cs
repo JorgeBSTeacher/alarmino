@@ -45,6 +45,11 @@ public sealed partial class MainViewModel : ObservableObject
     private DateTime _nextPrefetchSweepUtc = DateTime.MinValue;
     private int _prefetchRunning;
 
+    // El barrido de playlists abandonadas se pide desde cada cambio de ajustes o
+    // de alarma (muchos llamadores) y se ejecuta una sola vez por recojo: sin
+    // esta coalescencia, cada cambio programaría su propio trabajo de fondo.
+    private readonly PendingWorkSignal _orphanSweepRequested = new();
+
     public MainViewModel()
     {
         _store = new JsonDataStore();
@@ -797,6 +802,48 @@ public sealed partial class MainViewModel : ObservableObject
     public void PrefetchYouTube() => RunYouTubeBackground((url, ct) => _youtube.PrefetchAsync(url, ct));
 
     /// <summary>
+    /// Pide el barrido de las playlists que ya no usa ninguna alarma tras un
+    /// cambio de ajustes o de alarma. Es la vía del guardado: a diferencia del
+    /// arranque, aquí el cambio ocurre con la aplicación en marcha, así que hay
+    /// que limpiar la playlist abandonada en cuanto se abandona y no esperar al
+    /// próximo reinicio.
+    /// <para>
+    /// No ejecuta nada en el hilo de quien llama (jamás bloquea la interfaz):
+    /// solo deja la petición anotada y lanza el barrido en segundo plano. Las
+    /// peticiones repetidas se agrupan en una sola, así que llamarlo en cada
+    /// cambio de ajustes (hay más de treinta rutas) no acumula trabajos.
+    /// </para>
+    /// </summary>
+    private void RequestOrphanSweep()
+    {
+        _orphanSweepRequested.Request();
+
+        // Si ya hay una operación de YouTube en marcha, el pestillo la protege:
+        // esta petición queda pendiente y el siguiente recojo la atenderá (al
+        // terminar la operación en curso, véase RunYouTubeBackground).
+        if (Interlocked.Exchange(ref _prefetchRunning, 1) == 1)
+        {
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                do
+                {
+                    RemoveOrphanedPlaylists();
+                }
+                while (_orphanSweepRequested.TryTake());
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _prefetchRunning, 0);
+            }
+        });
+    }
+
+    /// <summary>
     /// Secuencia de YouTube del arranque, en segundo plano: primero el veredicto
     /// de descarga de cada playlist (solo disco, sin bloquear) y la descarga
     /// forzosa de las que no tienen nada listo; después la sincronización de la
@@ -829,8 +876,31 @@ public sealed partial class MainViewModel : ObservableObject
             finally
             {
                 Interlocked.Exchange(ref _prefetchRunning, 0);
+
+                // Un barrido pedido mientras esta operación corría (su petición
+                // encontró el pestillo tomado) no puede quedarse pendiente hasta
+                // el próximo cambio: se atiende aquí, todavía en segundo plano.
+                // Se hace DESPUÉS de soltar el pestillo y volviendo a pedirlo por
+                // la vía normal, para no dejar la ventana en la que una petición
+                // nueva se pierde entre la comprobación y el soltado.
+                DrainPendingOrphanSweep();
             }
         });
+    }
+
+    /// <summary>
+    /// Atiende las peticiones de barrido pendientes en segundo plano, tomando de
+    /// nuevo el pestillo de «una operación a la vez» si hace falta. Si otra
+    /// operación ya lo tiene, la petición sigue pendiente para su propio recojo.
+    /// </summary>
+    private void DrainPendingOrphanSweep()
+    {
+        if (!_orphanSweepRequested.IsPending)
+        {
+            return;
+        }
+
+        RequestOrphanSweep();
     }
 
     /// <summary>
@@ -1092,6 +1162,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _store.SaveAlarms(Alarms.Select(v => v.Model));
         PrefetchYouTube();
+        RequestOrphanSweep();
     }
 
     public void Preview(PlaybackRequest request) => _audio.Play(request);
@@ -1233,6 +1304,7 @@ public sealed partial class MainViewModel : ObservableObject
         _youtube.NoRepeatDays = _settings.NoRepeatDays;
         _youtube.TargetBufferCount = _settings.TargetBufferCount;
         PrefetchYouTube();
+        RequestOrphanSweep();
     }
 
     private void OnAlarmPropertyChanged(object? sender, PropertyChangedEventArgs e)

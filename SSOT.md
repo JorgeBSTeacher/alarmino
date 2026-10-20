@@ -2,7 +2,7 @@
 
 > Documento de referencia única para el desarrollo de **Alarmino**.
 > Cualquier discrepancia entre este documento y el código debe resolverse actualizando uno de los dos (prevalece el código en ejecución, pero se registra aquí el cambio).
-> Última actualización: 2026-09-14 · Versión v0.1.4
+> Última actualización: 2026-10-20 · Versión v0.1.5 (arranque fiable y mejoras de YouTube)
 
 ## 1. Visión general
 
@@ -14,6 +14,7 @@
 |---|---|---|
 | Motor / lenguaje | **C# .NET 8 + WPF (MVVM)** | Nativo Windows 10/11, ligero, audio MP3/WAV integrado vía **NAudio**, autostart simple (registro HKCU), UI nativa rápida de desarrollar |
 | Reproducción audio | **NAudio** (`WaveOutEvent` + `Mp3FileReader`/`WaveFileReader`) | Soporte MP3 y WAV sin dependencias externas |
+| Velocidad de reproducción | **`PlaybackFormatSelector` + `MediaFoundationResampler`** (no `WaveFormatConversionStream`, que es solo PCM) | `WaveOutEvent.Init` entrega al dispositivo el `WaveFormat` declarado por el proveedor sin remuestrear: una pista de YouTube a 48 kHz sobre un dispositivo a 44.1 kHz suena ~8,8 % rápida. Se remuestrea a la **velocidad/frecuencia del dispositivo** (leída con WASAPI `AudioClient.MixFormat`) para garantizar **1.0x** |
 | MVVM | **CommunityToolkit.Mvvm** (source generators) | Código limpio, observable, patrón estándar WPF |
 | Persistencia | **JSON** en `%APPDATA%\Alarmino\` (`alarms.json`, `config.json`, `events.json`) | Sencillo, editable y robusto para pocos datos |
 | Cronómetro | `DispatcherTimer` a **500 ms** con **`ITimeProvider` inyectable** | Suficiente precisión para timbres; reloj falso en tests → determinista |
@@ -54,8 +55,17 @@
   2. Registra el evento «Tocada» en `events.json` y muestra una **notificación** toast (click → abre la app).
 - Las alarmas solo suenan mientras el proceso está en ejecución; por eso la app **se autoejecuta** y **minimiza a la bandeja**.
 - **Silenciar alarma activa**: opción en el menú de la bandeja que corta la reproducción actual e impide que la misma alarma vuelva a tocar hasta que pase de minuto.
-- **Sonido de YouTube con búfer previo (empieza puntual)**: la pista se descarga **con antelación** —al arrancar la app, al guardar o editar una alarma, cada 30 min y tras cada reproducción— a la caché `%APPDATA%\Alarmino\cache\youtube`. Cuando suena la alarma, si hay una pista ya descargada **arranca al instante**, sin esperar red. Solo si no hay ninguna (primera vez, o descarga fallida) se descarga en el momento, lo que puede retrasarla unos segundos.
+- **Sonido de YouTube con búfer previo (empieza puntual)**: la pista se descarga **con antelación** —al arrancar la app, al guardar o editar una alarma, cada 30 min y tras cada reproducción— a la caché `%APPDATA%\Alarmino\cache\youtube`. Cuando suena la alarma, si hay una pista ya descargada **arranca al instante**, sin esperar red. Solo si no hay ninguna (primera vez, o descarga fallida) se descarga en el momento, con **timeout de 60 s**, lo que puede retrasarla unos segundos.
+- **Velocidad 1.0x garantizada**: el audio se remuestrea al formato del dispositivo de salida antes de reproducirse, de modo que una pista de YouTube (habitualmente 48 kHz) **no suene acelerada** en un dispositivo a 44.1 kHz. Es la corrección del defecto de «la alarma suena más rápida».
 - **Control de conectividad y respaldo**: si no hay pista descargada se comprueba la conexión (`generate_204` de YouTube, 4 s). Sin conexión, o si falla la descarga, se reproduce el **MP3 de respaldo** global; sin respaldo configurado la alarma queda en silencio. La pista precargada se conserva entre reinicios y se sustituye tras usarla (una distinta cada vez, hasta un máximo de 3 en la caché).
+- **Arranque nunca bloquea por red**: al encender, el temporizador de alarmas (500 ms) arranca **primero**; la parte de YouTube corre en segundo plano. Si una alarma gana la carrera, el camino de respaldo ya existente la atiende (descarga en vivo con timeout → MP3 de respaldo).
+- **Verificación explícita del estado de descarga al arrancar**: un trabajo de fondo escribe en el log, por cada playlist en uso, si hay pistas listas o ninguna. Si una playlist **no tiene nada descargado, la descarga se fuerza en ese momento**, saltando la ventana de 30 minutos (una caché vacía al arrancar ya no espera al siguiente barrido). El veredicto se lee **solo del disco**, sin tocar la red, para no bloquear el arranque.
+- **Sincronización con la lista remota y borrado seguro**: al arrancar se compara la caché con la playlist remota: se **descarga lo que falte** y se **borra de la caché lo que se haya quitado de la lista**. La completitud se comprueba contra el **número de pistas declarado por YouTube** (`Playlist.Count`), no contra el tope de lectura (`MaxPlaylistItems`, 300): ese tope es un límite de lectura, no una señal de lista completa, y usarlo impediría propagar borrados en playlists de menos de 300 vídeos. Si la consulta falla, llega vacía o truncada, **no se borra nada** (fail-closed); la negativa a borrar con un conjunto vacío vive dentro de la propia caché, como última línea de defensa.
+- **Limpieza de playlists abandonadas**: si una alarma cambia de playlist, la anterior deja de usarla ninguna alarma. Su pista se retira de la caché **por pertenencia local de id** (nunca consultando la red), tanto **al arrancar** como **al guardar ajustes o alarmas** (sin esperar al reinicio). No se confunde con «la descarga remota falló»: una playlist que sigue en uso conserva su pista pase lo que pase. Esta limpieza no ejecuta E/S en el hilo de la interfaz y agrupa las peticiones repetidas en una sola.
+- **Antirrepetición de canciones**: una pista ya reproducida no vuelve a elegirse durante una **ventana de días** configurable (por defecto **7**). Si la ventana se agota sin candidatos, se registra en el log y se repite; nunca se deja la alarma muda.
+- **Log de operaciones por sesión**: las decisiones de arranque, descarga, sincronización y borrado se registran, y las últimas líneas son visibles en Configuración → pestaña **Diagnóstico**.
+- **Estado visible del reproductor**: la ventana muestra qué está sonando y **los segundos transcurridos**, para saber de un vistazo que el audio avanza.
+- **Archivos y manifiesto**: la caché persiste un `manifest.json` con la pista consumida y su tamaño, de modo que una descarga truncada se detecta en el siguiente arranque (peso mínimo + tamaño declarado) y se descarta.
 
 ### 3.3 Volumen
 - **Volumen global** (0–100 %) en Configuración.
@@ -75,6 +85,7 @@
 - **Estilo ComboBox**: en tema oscuro el desplegable usa el mismo fondo y color de texto que el resto de la UI (se evita el default blanco del sistema).
 - **Desinstalación robusta**: antes de borrar, se cierran los procesos de Alarmino en ejecución y un ayudante en segundo plano espera a que el desinstalador termine para eliminar la carpeta de instalación completa (con reintentos). Evita que la app «reaparezca» o queden restos.
 - **Tres tipos de sonido** disponibles en cada alarma y en los botones ALARMA/LLUVIA: **sonido predeterminado**, **archivo local** (`.mp3`/`.wav`) y **pista aleatoria de una playlist de YouTube** (se pega la URL de la playlist). La pista se elige al azar (sin repetir la anterior), se descarga por adelantado a una caché local y **reutiliza el mismo archivo en todas las repeticiones**, de forma que la alarma empieza puntual sin esperas. Si no hay conexión o la descarga falla, suena automáticamente el **MP3 de respaldo** elegido en Configuración → General → «Respaldo sin conexión» (si no hay ninguno, la alarma queda en silencio).
+- **Sincronización de los días del editor con los botones**: al editar los días de repetición de una alarma, el cambio se **notifica** para que los botones de la ventana principal reflejen el estado real. Antes, cambiar los días dejaba los botones desincronizados.
 
 ### 3.4 bis Sonidos predeterminados
 - Los tres audios vienen **embebidos en el ensamblado** (no en archivos sueltos) para que funcionen también en el ejecutable único empaquetado. Al arrancar, `SoundLibrary.EnsureDefaultPresets()` los copia a `%APPDATA%\Alarmino\sounds\presets\{id}.mp3` **sin sobrescribir** lo que ya exista.
@@ -102,8 +113,9 @@
 | Seguridad | Sin secretos; no sube datos a red; rutas locales |
 | Calidad | Analizadores Roslyn activos (`EnforceCodeStyleInBuild`), `dotnet format` |
 | Tests | xUnit + Coverlet (cobertura objetiva); CI GitHub Actions (ubuntu + windows) |
-| Diagnóstico | Log a `%APPDATA%\Alarmino\logs\` para scheduler/audio |
+| Diagnóstico | Log a `%APPDATA%\Alarmino\logs\` para scheduler/audio; **log de operaciones por sesión** visible en Configuración → Diagnóstico |
 | Empaquetado | Instalador self-extracting stub + `.exe` portátil publicado (`artifacts/AlarminoSetup.exe`) |
+| Tests | **163 tests** en `Alarmino.Tests` (net8.0). `Alarmino.Tests` **no puede referenciar** el proyecto WPF (`net8.0-windows`): toda la lógica de UI/ViewModels es **verificada solo por compilación**, nunca por test unitario. Por eso la lógica verificable se extrae a `Alarmino.Core` como costura testeable |
 
 ## 5. Arquitectura
 
@@ -115,16 +127,33 @@ src/Alarmino (WPF, net8.0-windows)
 │   ├── ITimeProvider.cs     reloj inyectable (determinismo en tests)
 │   ├── JsonDataStore.cs     alarmas/config/eventos/log
 │   ├── AudioService.cs      NAudio: Play/Preview; presets (archivos) y respaldo
+│   │                        + remuestreo al formato del dispositivo (1.0x)
 │   ├── SchedulerService.cs  timer 500 ms + evaluación + disparo
 │   ├── AutostartService.cs  HKCU Run (+ /min)
 │   └── TrayIconService.cs   NotifyIcon + menú
 ├── ViewModels/              MainViewModel, AlarmEditorViewModel, ...
-├── Views/                   MainWindow, AlarmEditorDialog, SettingsView, EventsView
+├── Views/                   MainWindow, AlarmEditorDialog, SettingsView
+│                            (Configuración → Diagnóstico), EventsView
 └── Resources/               iconos, estilos, plantillas, temas claro/oscuro
 
-src/Alarmino.Tests (xUnit)   modelos, JsonDataStore, scheduler (reloj falso)
-tools/Alarmino.Installer    stub instalador WPF self-extracting (zip adjunto al exe)
-installer/AlarminoSetup.iss Inno Setup (opcional, solo Windows)
+src/Alarmino.Core (net8.0, sin WPF — lógica verificable con tests)
+└── Services/
+    ├── YouTubeAudioResolver.cs      precarga, sincronización remota,
+    │                                borrado seguro, veredicto de arranque
+    ├── YouTubeTrackCache.cs         caché + manifest.json; RemoveTracksNotIn,
+    │                                RemovePlaylistsNotIn (borrado fail-closed)
+    ├── PlaybackFormatSelector.cs    NeedsResampling / ComputeTargetFormat (1.0x)
+    ├── BootReadiness.cs             veredicto «N/M pistas listas» del arranque
+    ├── OfflineFallbackReadiness.cs  veredicto del respaldo sin conexión
+    ├── OfflineFallbackSelector.cs   elección del MP3 de respaldo
+    ├── PlayHistoryStore.cs          ventana antirrepetición por playlist
+    ├── OperationLog.cs              log por sesión (líneas recientes)
+    └── PendingWorkSignal.cs         señal de un bit que agrupa barridos repetidos
+
+src/Alarmino.Tests (xUnit)   modelos, JsonDataStore, scheduler (reloj falso),
+                             caché de YouTube, arranque, formato de reproducción
+tools/Alarmino.Installer     stub instalador WPF self-extracting (zip adjunto al exe)
+installer/AlarminoSetup.iss  Inno Setup (opcional, solo Windows)
 scripts/                     dev, test, debug, build, publish, package,
                              gen-sounds, analyse, smoke-win, bench (ver §7)
 .github/workflows/build.yml  CI ubuntu (build+test+análisis) y windows (publish+instalador)
@@ -144,6 +173,11 @@ scripts/                     dev, test, debug, build, publish, package,
 | Permisos admin | No requeridos (instalación + autostart por usuario) |
 | YouTube cambia su API interna (la librería YoutubeExplode está en modo mantenimiento) | Si falla la descarga, el sonido cae automáticamente al MP3 de respaldo local; el error queda en el log |
 | La descarga de una pista llega vacía, truncada o corrupta | Se valida antes de reproducirla (peso mínimo y comparación con el tamaño del manifiesto); si no es válida se descarta y se usa el MP3 de respaldo |
+| El audio de YouTube suena acelerado (48 kHz sobre dispositivo a 44.1 kHz) | Se remuestrea al formato del dispositivo antes de reproducir; `MediaFoundationResampler` se aplica a la **fuente final** (no `WaveFormatConversionStream`, que solo admite PCM). Objetivo: **1.0x** |
+| Una consulta a la playlist falla, llega vacía o truncada | **No se borra nada** de la caché (fail-closed). La negativa ante un conjunto vacío vive dentro de `YouTubeTrackCache`, no solo en quien llama. La completitud se mide contra `Playlist.Count` declarado por YouTube, nunca contra el tope de lectura de 300 |
+| El arranque no da tiempo a comprobar la descarga antes de la primera alarma | El arranque **nunca** bloquea por red: el temporizador arranca primero y, si la alarma gana, se usa el respaldo o la descarga en vivo con timeout. La comprobación de estado corre en segundo plano y fuerza la descarga si la playlist está vacía |
+| Caché ocupada por playlists que ya no usa ninguna alarma | Barrido por pertenencia local de id, al arrancar y al guardar. Un huérfano consumía una de las 3 plazas y podía desalojar una pista necesaria |
+| El respaldo sin conexión existe pero el log no lo confirma | El arranque registra **siempre** el veredicto del respaldo (validado / establecido / ninguno); antes el camino normal —respaldo ya válido— no dejaba ninguna línea |
 
 ## 7. Plan de scripts (testear, debuggear, mejorar)
 
@@ -163,6 +197,9 @@ CI GitHub Actions.
 7. Registro de eventos con Tocada/Omitida.
 8. Tema oscuro/claro; volumen global; probar sonido.
 9. `dotnet build` y `dotnet test` en CI pasan.
+10. La pista de YouTube suena a **velocidad 1.0x** en un dispositivo real (remuestreo al formato de salida).
+11. El arranque **no se bloquea** por red y, si la playlist está vacía, fuerza la descarga y lo registra en el log.
+12. La caché se sincroniza con la lista remota (descarga lo que falte, borra lo que se quitó) sin borrar nunca ante una consulta fallida o vacía.
 
 ---
 

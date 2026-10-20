@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Alarmino.Core.Services;
 
 /// <summary>
@@ -21,6 +23,13 @@ public sealed class YouTubeTrackCache
     public string DirectoryPath => _dir;
 
     private const string Separator = "--";
+
+    /// <summary>Archivo JSON junto a las pistas que conserva el estado entre sesiones.</summary>
+    private const string ManifestFileName = "manifest.json";
+
+    private string ManifestPath => Path.Combine(_dir, ManifestFileName);
+
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     /// <summary>
     /// Nombre de archivo de una pista dentro de la caché. El separador "--"
@@ -65,7 +74,11 @@ public sealed class YouTubeTrackCache
             }
 
             _pendingWrites.Remove(filePath);
-            _entries[playlistId] = new Entry(videoId, filePath, downloadedAtUtc) { Consumed = consumed };
+            _entries[playlistId] = new Entry(videoId, filePath, downloadedAtUtc)
+            {
+                Consumed = consumed,
+                ExpectedBytes = TryGetFileSize(filePath),
+            };
 
             while (_entries.Count > MaxTracks)
             {
@@ -79,6 +92,7 @@ public sealed class YouTubeTrackCache
         }
 
         DeleteFiles(toDelete);
+        SaveManifest();
     }
 
     /// <summary>
@@ -102,6 +116,7 @@ public sealed class YouTubeTrackCache
             entry.Consumed = true;
             filePath = entry.FilePath;
             videoId = entry.VideoId;
+            SaveManifest();
             return true;
         }
     }
@@ -120,7 +135,9 @@ public sealed class YouTubeTrackCache
 
     /// <summary>
     /// Recupera las pistas que ya estaban descargadas en la carpeta (sesiones
-    /// anteriores) para poder sonar a la hora sin descargar nada.
+    /// anteriores) para poder sonar a la hora sin descargar nada. Una pista que
+    /// no supera las comprobaciones de integridad (p. ej. truncada por un corte
+    /// de luz) se descarta y se borra en lugar de registrarse.
     /// </summary>
     public void LoadExisting()
     {
@@ -138,11 +155,19 @@ public sealed class YouTubeTrackCache
             return;
         }
 
+        Dictionary<string, ManifestEntry> manifest = LoadManifest();
+
         var obsolete = new List<string>();
         var parsed = new List<(string PlaylistId, string VideoId, FileInfo File)>();
 
         foreach (FileInfo file in files)
         {
+            // El manifiesto no es una pista: no se barre ni se borra.
+            if (IsManifestFile(file.FullName))
+            {
+                continue;
+            }
+
             string name = Path.GetFileNameWithoutExtension(file.Name);
             int index = name.IndexOf(Separator, StringComparison.Ordinal);
             if (index <= 0 || index + Separator.Length >= name.Length)
@@ -165,15 +190,38 @@ public sealed class YouTubeTrackCache
                 {
                     obsolete.Add(file.FullName);
                 }
+
+                continue;
             }
-            else
+
+            // Un archivo recuperado del disco solo se registra si supera las
+            // comprobaciones de integridad: un fragmento truncado por un corte
+            // de luz se descarta aquí y no llega nunca a NAudio.
+            ManifestEntry? known = manifest.GetValueOrDefault(playlistId);
+            if (known is not null && !string.Equals(known.VideoId, videoId, StringComparison.Ordinal))
             {
-                _entries[playlistId] = new Entry(videoId, file.FullName, file.LastWriteTimeUtc);
+                known = null;
             }
+
+            if (!TrackSanity.LooksPlayable(file.FullName, known?.SizeBytes))
+            {
+                obsolete.Add(file.FullName);
+                AppendLog($"Caché YouTube: se descarta pista dañada o incompleta ({file.Name}).");
+                continue;
+            }
+
+            _entries[playlistId] = new Entry(videoId, file.FullName, file.LastWriteTimeUtc)
+            {
+                // El estado consumido debe sobrevivir al reinicio: una pista ya
+                // sonada no se vuelve a servir en la próxima sesión.
+                Consumed = known?.Consumed ?? false,
+                ExpectedBytes = known?.SizeBytes ?? file.Length,
+            };
         }
 
         DeleteFiles(obsolete);
         Prune();
+        SaveManifest();
     }
 
     /// <summary>Vídeo almacenado para esa playlist, esté o no consumido.</summary>
@@ -213,7 +261,7 @@ public sealed class YouTubeTrackCache
         try
         {
             return Directory.GetFiles(_dir)
-                .Where(f => !referenced.Contains(f) && !IsPending(f))
+                .Where(f => !referenced.Contains(f) && !IsPending(f) && !IsManifestFile(f))
                 .ToList();
         }
         catch (IOException)
@@ -225,6 +273,113 @@ public sealed class YouTubeTrackCache
             return [];
         }
     }
+
+    /// <summary>Estado persistente de una pista, para recuperarlo en la próxima sesión.</summary>
+    private sealed class ManifestEntry
+    {
+        public string PlaylistId { get; set; } = "";
+
+        public string VideoId { get; set; } = "";
+
+        public string FileName { get; set; } = "";
+
+        public DateTime DownloadedAtUtc { get; set; }
+
+        public bool Consumed { get; set; }
+
+        public long? SizeBytes { get; set; }
+    }
+
+    private sealed class ManifestData
+    {
+        public List<ManifestEntry> Tracks { get; set; } = [];
+    }
+
+    private static bool IsManifestFile(string path) =>
+        string.Equals(Path.GetFileName(path), ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(Path.GetFileName(path), ManifestFileName + ".tmp", StringComparison.OrdinalIgnoreCase);
+
+    private static long? TryGetFileSize(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Lee el manifiesto: playlistId → estado de su pista.</summary>
+    private Dictionary<string, ManifestEntry> LoadManifest()
+    {
+        try
+        {
+            if (!File.Exists(ManifestPath))
+            {
+                return new Dictionary<string, ManifestEntry>(StringComparer.Ordinal);
+            }
+
+            var data = JsonSerializer.Deserialize<ManifestData>(File.ReadAllText(ManifestPath), JsonOptions);
+            return data?.Tracks?
+                .Where(t => !string.IsNullOrEmpty(t.PlaylistId) && !string.IsNullOrEmpty(t.FileName))
+                .GroupBy(t => t.PlaylistId, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal)
+                ?? new Dictionary<string, ManifestEntry>(StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Caché YouTube: manifiesto ilegible ({ex.Message}).");
+            return new Dictionary<string, ManifestEntry>(StringComparer.Ordinal);
+        }
+    }
+
+    private void SaveManifest()
+    {
+        try
+        {
+            Directory.CreateDirectory(_dir);
+
+            ManifestData data;
+            lock (_gate)
+            {
+                data = new ManifestData
+                {
+                    Tracks = _entries.Select(e => new ManifestEntry
+                    {
+                        PlaylistId = e.Key,
+                        VideoId = e.Value.VideoId,
+                        FileName = Path.GetFileName(e.Value.FilePath),
+                        DownloadedAtUtc = e.Value.DownloadedAtUtc,
+                        Consumed = e.Value.Consumed,
+                        SizeBytes = e.Value.ExpectedBytes,
+                    }).ToList(),
+                };
+            }
+
+            string temp = ManifestPath + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(data, JsonOptions));
+            if (File.Exists(ManifestPath))
+            {
+                File.Replace(temp, ManifestPath, null);
+            }
+            else
+            {
+                File.Move(temp, ManifestPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Caché YouTube: no se pudo guardar el manifiesto ({ex.Message}).");
+        }
+    }
+
+    private static void AppendLog(string message) => JsonDataStore.AppendLogLine(null, message);
 
     private static void DeleteFiles(IEnumerable<string> paths)
     {
@@ -258,5 +413,8 @@ public sealed class YouTubeTrackCache
         public DateTime DownloadedAtUtc { get; } = downloadedAtUtc;
 
         public bool Consumed { get; set; }
+
+        /// <summary>Tamaño real del archivo al registrarlo (referencia de integridad).</summary>
+        public long? ExpectedBytes { get; set; }
     }
 }

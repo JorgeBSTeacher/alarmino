@@ -326,6 +326,77 @@ public class YouTubeAudioResolverTests
     }
 
     [Fact]
+    public async Task Prefetch_offline_does_not_burn_the_throttle()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var probe = new FakeProbe(online: false);
+            var resolver = new YouTubeAudioResolver(cacheDir: dir, connectivity: probe);
+
+            await resolver.PrefetchAsync("https://www.youtube.com/playlist?list=PL123abc");
+            await resolver.PrefetchAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            // Sin conexión no se consume el intento: cada llamada vuelve a comprobar la red
+            // (y el próximo barrido podrá reintentar en cuanto haya conexión).
+            Assert.Equal(2, probe.Calls);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task WithLiveTimeoutAsync_returns_the_result_when_it_finishes_in_time()
+    {
+        string result = await YouTubeAudioResolver.WithLiveTimeoutAsync(
+            _ => Task.FromResult("ok"), TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.Equal("ok", result);
+    }
+
+    [Fact]
+    public async Task WithLiveTimeoutAsync_throws_TimeoutException_when_the_download_hangs()
+    {
+        using var cts = new CancellationTokenSource();
+
+        // Una red colgada no debe dejar la alarma en silencio: se corta y se
+        // cae al respaldo. El token del usuario no se toca (sigue para el stop).
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            YouTubeAudioResolver.WithLiveTimeoutAsync(
+                async ct =>
+                {
+                    await Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, ct);
+                    return 0;
+                },
+                TimeSpan.FromMilliseconds(50),
+                cts.Token));
+
+        Assert.False(cts.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task WithLiveTimeoutAsync_propagates_user_cancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            YouTubeAudioResolver.WithLiveTimeoutAsync(
+                async ct =>
+                {
+                    await Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, ct);
+                    return 0;
+                },
+                TimeSpan.FromSeconds(30),
+                cts.Token));
+    }
+
+    [Fact]
     public async Task Prefetch_does_nothing_when_a_fresh_track_exists()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));

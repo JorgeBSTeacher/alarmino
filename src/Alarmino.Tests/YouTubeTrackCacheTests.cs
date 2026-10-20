@@ -15,11 +15,22 @@ public sealed class YouTubeTrackCacheTests : IDisposable
         }
     }
 
+    /// <summary>Contenido que supera las comprobaciones de integridad de <see cref="TrackSanity"/>.</summary>
+    private static byte[] PlayableContent()
+    {
+        // 40 KB con cabecera MPEG (160 kbps, 44,1 kHz → 2 s de audio válido).
+        byte[] data = new byte[40 * 1024];
+        data[0] = 0xFF;
+        data[1] = 0xFB;
+        data[2] = 0xA0;
+        return data;
+    }
+
     private string CreateFile(string playlistId, string videoId, string extension = "m4a")
     {
         Directory.CreateDirectory(_dir);
         string path = Path.Combine(_dir, YouTubeTrackCache.BuildFileName(playlistId, videoId, extension));
-        File.WriteAllText(path, "audio");
+        File.WriteAllBytes(path, PlayableContent());
         return path;
     }
 
@@ -135,6 +146,56 @@ public sealed class YouTubeTrackCacheTests : IDisposable
 
         Assert.True(File.Exists(file));
         Assert.True(restarted.IsFresh("PLabc", TimeSpan.FromHours(6), DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void LoadExisting_discards_a_recovered_file_below_the_minimum_size()
+    {
+        // Una descarga interrumpida a media transmisión deja un archivo casi vacío.
+        Directory.CreateDirectory(_dir);
+        string junk = Path.Combine(_dir, YouTubeTrackCache.BuildFileName("PL1", "videoA", "m4a"));
+        File.WriteAllText(junk, "cortada");
+
+        var cache = new YouTubeTrackCache(_dir);
+        cache.LoadExisting();
+
+        Assert.False(cache.TryTake("PL1", out _, out _));
+        Assert.False(File.Exists(junk));
+    }
+
+    [Fact]
+    public void LoadExisting_discards_a_file_truncated_below_the_manifest_size()
+    {
+        string file = CreateFile("PL1", "videoA");
+        var cache = new YouTubeTrackCache(_dir);
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+
+        // Corte de luz a media descarga: el archivo queda por debajo del tamaño
+        // registrado en el manifiesto, así que no es una pista utilizable.
+        byte[] full = File.ReadAllBytes(file);
+        File.WriteAllBytes(file, full[..(int)(full.Length * 0.6)]);
+
+        var restarted = new YouTubeTrackCache(_dir);
+        restarted.LoadExisting();
+
+        Assert.False(restarted.TryTake("PL1", out _, out _));
+        Assert.False(File.Exists(file));
+    }
+
+    [Fact]
+    public void LoadExisting_restores_the_consumed_state()
+    {
+        string file = CreateFile("PL1", "videoA");
+        var cache = new YouTubeTrackCache(_dir);
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+        Assert.True(cache.TryTake("PL1", out _, out _));  // la pista suena y se consume
+
+        var restarted = new YouTubeTrackCache(_dir);
+        restarted.LoadExisting();
+
+        // Tras el reinicio la pista sigue consumida: no se vuelve a servir.
+        Assert.False(restarted.TryTake("PL1", out _, out _));
+        Assert.False(restarted.IsFresh("PL1", TimeSpan.FromHours(6), DateTime.UtcNow));
     }
 
     [Fact]

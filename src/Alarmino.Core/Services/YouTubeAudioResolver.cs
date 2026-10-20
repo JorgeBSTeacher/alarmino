@@ -89,6 +89,12 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
     /// <summary>Una pista más antigua que esto se vuelve a precargar.</summary>
     private static readonly TimeSpan MaxTrackAge = TimeSpan.FromHours(6);
 
+    /// <summary>
+    /// Tiempo máximo para la descarga en vivo (cuando suena la alarma y no hay
+    /// pista precargada). Sin él, una red colgada dejaría la alarma en silencio.
+    /// </summary>
+    private static readonly TimeSpan LiveDownloadTimeout = TimeSpan.FromSeconds(60);
+
     private readonly YouTubeTrackCache _cache;
     private readonly IConnectivityProbe _connectivity;
     private readonly YoutubeClient _youtube = new();
@@ -137,8 +143,15 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
         try
         {
-            string videoId = await PickRandomVideoIdAsync(playlistId, [LastVideoId], cancellationToken);
-            string file = await DownloadAudioAsync(playlistId, videoId, cancellationToken, consumed: true);
+            // Descarga en vivo con tiempo máximo: una red colgada no debe dejar
+            // la alarma en silencio; el tiempo agotado cae al respaldo.
+            var (videoId, file) = await WithLiveTimeoutAsync(async ct =>
+            {
+                string id = await PickRandomVideoIdAsync(playlistId, [LastVideoId], ct);
+                string path = await DownloadAudioAsync(playlistId, id, ct, consumed: true);
+                return (id, path);
+            }, LiveDownloadTimeout, cancellationToken);
+
             LastVideoId = videoId;
             MarkPrefetchAttempt(playlistId);
             return file;
@@ -151,6 +164,26 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
         {
             AppendLog($"YouTube: {ex.Message}");
             return fallbackFilePath;
+        }
+    }
+
+    /// <summary>
+    /// Ejecuta una acción de descarga ligada a un tiempo máximo. Si se agota,
+    /// lanza <see cref="TimeoutException"/> (para que el llamador caiga al
+    /// respaldo) sin tocar el token del usuario, que queda reservado al stop.
+    /// </summary>
+    public static async Task<T> WithLiveTimeoutAsync<T>(
+        Func<CancellationToken, Task<T>> action, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+        try
+        {
+            return await action(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            throw new TimeoutException($"La descarga superó el tiempo máximo de {timeout.TotalSeconds:0} s.");
         }
     }
 
@@ -209,14 +242,22 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
         try
         {
-            MarkPrefetchAttempt(playlistId);
-
             if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
             {
                 return;
             }
 
+            // Sin conexión no se consume el intento: se pospone y el próximo
+            // barrido lo reintenta, en lugar de quemar la ventana de 30 minutos.
             if (!await _connectivity.IsOnlineAsync().ConfigureAwait(false))
+            {
+                AppendLog("YouTube (precarga): sin conexión; se pospone el intento.");
+                return;
+            }
+
+            MarkPrefetchAttempt(playlistId);
+
+            if (_cache.IsFresh(playlistId, MaxTrackAge, DateTime.UtcNow))
             {
                 return;
             }

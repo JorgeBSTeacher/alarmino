@@ -117,6 +117,23 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
     /// <summary>Id del último vídeo reproducido, para no repetirlo consecutivamente.</summary>
     public string? LastVideoId { get; private set; }
 
+    /// <summary>
+    /// Se dispara al empezar (<c>true</c>) y al terminar (<c>false</c>) cada descarga
+    /// de audio, tanto la precarga en segundo plano como la descarga en vivo. Es la
+    /// señal que usa la ventana principal para mostrar «Descargando…». Se dispara
+    /// desde el hilo que descarga, así que quien escuche debe saltar a su propio
+    /// hilo de interfaz.
+    /// </summary>
+    public event Action<bool>? DownloadActivityChanged;
+
+    /// <summary>
+    /// Hay al menos una descarga de audio en curso. Es el respaldo del evento para
+    /// quien prefiera consultar el estado en cada refresco en lugar de suscribirse.
+    /// </summary>
+    public bool IsDownloading => Volatile.Read(ref _activeDownloads) > 0;
+
+    private int _activeDownloads;
+
     public YouTubeAudioResolver(
         string? cacheDir = null,
         IConnectivityProbe? connectivity = null,
@@ -462,6 +479,20 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
     private async Task<string> DownloadAudioAsync(string playlistId, string videoId, CancellationToken cancellationToken, bool consumed = false)
     {
+        BeginDownload();
+        try
+        {
+            return await DownloadAudioCoreAsync(playlistId, videoId, cancellationToken, consumed).ConfigureAwait(false);
+        }
+        finally
+        {
+            EndDownload();
+        }
+    }
+
+    /// <summary>Descarga real de la pista, envuelta por el aviso de actividad.</summary>
+    private async Task<string> DownloadAudioCoreAsync(string playlistId, string videoId, CancellationToken cancellationToken, bool consumed)
+    {
         var manifest = await _youtube.Videos.Streams.GetManifestAsync(videoId, cancellationToken).ConfigureAwait(false);
 
         // Se prefiere AAC (mp4/m4a/mp3), que Windows Media Foundation decodifica siempre.
@@ -549,6 +580,38 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
     /// <summary>Identificador legible de una pista para el log.</summary>
     private static string Describe(string? videoId) => string.IsNullOrWhiteSpace(videoId) ? "sin id" : videoId;
+
+    /// <summary>Cuenta una descarga en curso y avisa de que ha empezado.</summary>
+    private void BeginDownload()
+    {
+        Interlocked.Increment(ref _activeDownloads);
+        EmitDownloadActivity(true);
+    }
+
+    /// <summary>Descarta una descarga en curso y avisa de que ha terminado.</summary>
+    private void EndDownload()
+    {
+        if (Interlocked.Decrement(ref _activeDownloads) <= 0)
+        {
+            Interlocked.Exchange(ref _activeDownloads, 0);
+            EmitDownloadActivity(false);
+        }
+    }
+
+    /// <summary>
+    /// Avisa de la actividad de descarga sin que un fallo de quien escucha pueda
+    /// romper la descarga (la alarma debe sonar por encima de la interfaz).
+    /// </summary>
+    private void EmitDownloadActivity(bool downloading)
+    {
+        try
+        {
+            DownloadActivityChanged?.Invoke(downloading);
+        }
+        catch
+        {
+        }
+    }
 
     private static void AppendLog(string message) => OperationLog.Write("youtube", message);
 

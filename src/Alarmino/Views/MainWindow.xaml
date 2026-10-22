@@ -15,6 +15,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -104,6 +105,21 @@
             <Button Content="＋ Añadir alarma" Command="{Binding AddAlarmCommand}" Padding="18,8" />
             <Button Content="⚙ Configuración" Click="OnSettingsClick"
                     Style="{StaticResource SecondaryButton}" Margin="12,0,0,0" Padding="14,8" />
+
+            <ToggleButton IsChecked="{Binding IsLogExpanded, Mode=TwoWay}"
+                          Margin="12,0,0,0" Padding="14,8"
+                          ToolTip="Despliega el registro en vivo: estado de la red, pistas descargadas y operaciones de la sesión.">
+                <ToggleButton.Style>
+                    <Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+                        <Setter Property="Content" Value="Ver log" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource Self}}" Value="True">
+                                <Setter Property="Content" Value="Ocultar log" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ToggleButton.Style>
+            </ToggleButton>
         </WrapPanel>
 
         <!-- Parar la reproducción en curso -->
@@ -122,8 +138,98 @@
             </StackPanel>
         </Grid>
 
+        <!-- Panel de diagnóstico en vivo: red, pistas descargadas y registro de la sesión -->
+        <Border Grid.Row="3"
+                Visibility="{Binding IsLogExpanded, Converter={StaticResource BoolToVisibilityConverter}}"
+                Background="{DynamicResource BrushCardBg}"
+                BorderBrush="{DynamicResource BrushBorder}"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="14,10"
+                Margin="0,4,0,12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Indicadores: red y pistas descargadas -->
+                <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+                    <Border CornerRadius="10" Padding="12,5" Margin="0,0,10,0"
+                            Background="{DynamicResource BrushInputBg}">
+                        <TextBlock Text="{Binding NetworkStatusText}" FontWeight="SemiBold">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                    <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsNetworkOnline}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource BrushSuccess}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsNetworkOnline}" Value="False">
+                                            <Setter Property="Foreground" Value="{DynamicResource BrushDanger}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Border>
+
+                    <Border CornerRadius="10" Padding="12,5" Background="{DynamicResource BrushInputBg}">
+                        <TextBlock Text="{Binding TrackStatusText}" FontWeight="SemiBold">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                    <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasReadyTrack}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource BrushSuccess}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding HasReadyTrack}" Value="False">
+                                            <Setter Property="Foreground" Value="{DynamicResource BrushDanger}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Border>
+                </WrapPanel>
+
+                <!-- Detalle: caché de pistas y reproductor -->
+                <TextBlock Grid.Row="1"
+                           Text="{Binding DiagnosticsDetails}"
+                           Style="{StaticResource SecondaryText}"
+                           FontFamily="Consolas"
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,8" />
+
+                <!-- Registro en vivo -->
+                <ScrollViewer Grid.Row="2"
+                              x:Name="LogScroll"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Auto"
+                              Background="{DynamicResource BrushInputBg}"
+                              BorderBrush="{DynamicResource BrushBorder}"
+                              BorderThickness="1"
+                              Padding="6"
+                              MinHeight="120"
+                              MaxHeight="240">
+                    <ItemsControl ItemsSource="{Binding LogLines}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}"
+                                           FontFamily="Consolas"
+                                           FontSize="11"
+                                           TextWrapping="NoWrap" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
         <!-- Contenido: solo alarmas -->
-        <Grid Grid.Row="3">
+        <Grid Grid.Row="4">
             <TextBlock Text="Todavía no hay alarmas. Pulsa «Añadir alarma» para crear la primera."
                        Style="{StaticResource SecondaryText}" FontSize="14"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -238,7 +344,7 @@
         </Grid>
 
         <!-- Pie -->
-        <TextBlock Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource SecondaryText}"
+        <TextBlock Grid.Row="5" Margin="0,8,0,0" Style="{StaticResource SecondaryText}"
                    Text="Alarmino se guarda en segundo plano en la bandeja · Cierra la ventana para minimizar" />
     </Grid>
 </Window>

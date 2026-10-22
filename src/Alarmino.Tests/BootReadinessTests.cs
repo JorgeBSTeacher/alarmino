@@ -251,4 +251,5 @@ public sealed class BootReadinessTests : IDisposable
             await Task.Delay(Timeout.InfiniteTimeSpan);
             return true;
         }
-    }}
+    }
+}

@@ -39,6 +39,36 @@ public sealed class YouTubeTrackCacheTests : IDisposable
     }
 
     [Fact]
+    public void DescribeEntries_reports_every_registered_track()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+        string file = CreateFile("PL1", "videoA");
+        cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+        cache.Register("PL2", "videoB", CreateFile("PL2", "videoB"), DateTime.UtcNow, consumed: true);
+
+        IReadOnlyList<CachedTrackInfo> entries = cache.DescribeEntries();
+
+        Assert.Equal(2, entries.Count);
+
+        CachedTrackInfo first = entries.Single(e => e.PlaylistId == "PL1");
+        Assert.Equal("videoA", first.VideoId);
+        Assert.False(first.Consumed);
+        Assert.True(first.FileExists);
+        Assert.Equal(40 * 1024, first.Bytes);
+
+        CachedTrackInfo second = entries.Single(e => e.PlaylistId == "PL2");
+        Assert.True(second.Consumed);
+    }
+
+    [Fact]
+    public void DescribeEntries_is_empty_without_tracks()
+    {
+        var cache = new YouTubeTrackCache(_dir);
+
+        Assert.Empty(cache.DescribeEntries());
+    }
+
+    [Fact]
     public void TryTake_returns_preloaded_track_once()
     {
         var cache = new YouTubeTrackCache(_dir);

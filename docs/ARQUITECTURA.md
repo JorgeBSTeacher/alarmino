@@ -32,13 +32,14 @@ Núcleo de dominio, **sin referencias a WPF**: se ejecuta y se testea en Linux.
 | Sonidos de usuario | `SoundLibrary` (biblioteca `%APPDATA%\Alarmino\sounds`, `EnsureDefaultPresets`) |
 | Descargas de audio | `TrackSanity` (descarta descargas vacías, truncadas o corruptas sin depender del códec) |
 | Sonido de YouTube | `YouTubeAudioResolver` (YoutubeExplode: lista la playlist, elige pista al azar, **precarga** la descarga), `YouTubeTrackCache` (pistas ya descargadas, una por playlist, máx. 3, recuperadas entre reinicios), `ConnectivityProbe` (control de conexión, cacheado 5 s), `IYouTubeAudioResolver` |
+| Diagnóstico | `LiveDiagnostics` (foto de estado: red, pistas en caché y reproductor → texto), `NetworkStatusMonitor` (vigila la conexión sin martillear la red), `OperationLog.LineWritten` (evento de línea en vivo) |
 | Planos de reproducción | `PlaybackRequest` |
 
 ### 1.2 `Alarmino` (app WPF)
 Capa de presentación y servicios de OS (solo Windows):
 
 - **ViewModels** (MVVM, `CommunityToolkit.Mvvm` con source generators): `MainViewModel` (lista, scheduler, bandeja, configuración) y `AlarmEditorViewModel` (alta/edición + previsualización).
-- **Views**: `MainWindow`, `EditorWindow`, `SettingsWindow` (XAML + code-behind mínimos: diálogo, cierres).
+- **Views**: `MainWindow` (con el **panel de diagnóstico en vivo** desplegable, ver §2.5), `EditorWindow`, `SettingsWindow` (XAML + code-behind mínimos: diálogo, cierres).
 - **Services**:
   - `AudioService` — reproducción NAudio (`WaveOutEvent`), modo completo/duración personalizada, repetición con pausa, parada inmediata, cola por lock.
   - `TruncatedWaveStream` — recorta a una duración máxima.
@@ -81,7 +82,15 @@ Formato del instalador: `[stub.exe][payload.zip]ALARMINO_PAYLOAD[longitud u64 li
 - Tema: `ThemeService.Apply` **reemplaza el diccionario de tema** en las `MergedDictionaries` de `App.xaml` **y** re-publica los pinceles en `Application.Resources` (doble mecanismo). Las tres ventanas declaran `Background/Foreground` explícitos con `DynamicResource`.
 - Notificaciones de Windows: la opción «Mostrar notificaciones…» (propiedad `NotificationSoundEnabled`) **gating total**: con ella desactivada no se muestra ningún globo (ni en alarma tocada ni en omitida). Con ella activa, `TrayIconService.ShowNotification` muestra globo con sonido (`ToolTipIcon.Info`).
 
-### 2.4 Autostart y bandeja
+### 2.4 Panel de diagnóstico en vivo
+- Botón **«Ver log»** en la barra de acciones de `MainWindow`: alterna `IsLogExpanded` (TwoWay) y despliega un panel con tres zonas.
+- **Indicadores** (con color): `NetworkStatusText` («Red: con/sin conexión» + hora de la comprobación) y `TrackStatusText` («Pista descargada: disponible (N de M listas)» / «NINGUNA»). Los pinta `DiagnosticsFormatter`, que es texto puro (testeable sin WPF).
+- **Detalle**: `DiagnosticsFormatter.Describe` lista cada pista de la caché (`playlist · vídeo · tamaño · consumida/sin usar · hora de descarga`), el estado del reproductor y si hay una descarga en curso.
+- **Registro en vivo**: `OperationLog` expone el evento `LineWritten`; el `MainViewModel` lo recibe, salta al hilo de interfaz (`_dispatcher`) y va rellenando `LogLines` (200 líneas, las más recientes al final). El code-behind hace `ScrollToEnd` en cada línea nueva.
+- **Ritmo**: el `DispatcherTimer` de 500 ms ya existente refresca el panel **cada 2 s** y solo si está desplegado. La red se comprueba como mucho **cada 15 s** (`NetworkStatusMonitor`, con reloj inyectado para testearlo); el resto es de disco. Con el panel cerrado no se toca la red.
+- Los cambios de conexión se anotan en el propio log (`[red] conexión disponible.` / `sin conexión con YouTube.`), de modo que el historial explica por qué una alarma usó el respaldo.
+
+### 2.5 Autostart y bandeja
 - `AutostartService` escribe `"ruta\Alarmino.exe" /min` (o sin `/min` si «mostrar ventana al inicio») en `HKCU\...\Run`.
 - Al cerrar la ventana → se oculta a la bandeja; «Salir» del menú de bandeja termina el proceso.
 
@@ -109,7 +118,7 @@ Cross-compilation: la app e instalador usan `EnableWindowsTargeting`, así que *
 ### 5.1 Estrategia
 La lógica que importa vive en `Alarmino.Core` (net8.0), por lo que la **mayoría del testeo se ejecuta en CI/Linux** sin WPF ni dispositivo de audio. La UI y la salida real de sonido se validan manualmente en Windows (limitación conocida).
 
-### 5.2 Casos (66 tests, xUnit verde)
+### 5.2 Casos (177 tests, xUnit verde)
 | Archivo / clase | Qué cubre |
 |---|---|
 | `SchedulerEvaluatorTests` (10) | disparo al entrar en el minuto, no redispare dentro del mismo minuto, días de la semana, alarmas inactivas, **franjas omitidas por salto de tiempo** (equipo dormido), orden de coincidencias — con `FakeTimeProvider` |
@@ -117,9 +126,16 @@ La lógica que importa vive en `Alarmino.Core` (net8.0), por lo que la **mayorí
 | `FadeOutWaveStreamTests` (3) | la señal se mantiene antes del fade, llega **a ~silencio** al final y decae en la ventana de fade |
 | `SoundLibraryTests` (4) | copia a biblioteca con nombre único, `Normalize` (migración), resolución de preset y **`EnsureDefaultPresets`**: instala los 3 MP3 y comprueba que son MPEG válidos con duración > 1 s |
 | `TrackSanityTests` (5) | acepta un MP3 real y un **bip de 2 s** completo, rechaza vacío/mínimo/inexistente, detecta una descarga **truncada al 60 %** comparando con el tamaño del manifiesto, y sin tamaño esperado decide por la duración de la cabecera (y `null` si no es MP3) |
-| `YouTubeTrackCacheTests` (8) | tomar pista una sola vez, caducidad/frescura, sustitución por playlist, tope de 3 pistas, recuperación entre sesiones, borrado de huérfanos y protección del archivo en descarga |
-| `ModelsAndStoreTests` → `DayFlagsTests` (4) + `JsonDataStoreTests` (7) + `SoundPresetsTests` (4) | flags y texto de días, **round-trip JSON** de alarmas/config/eventos, archivos ausentes → valores por defecto, **round-trip de `SoundSelection.YouTube`** y del MP3 de respaldo, los 3 sonidos predeterminados y su **migración de ids antiguos** |
-| `ModelsAndStoreTests` → `YouTubeAudioResolverTests` (12) | extracción del id de playlist (URLs válidas/inválidas), **decisión offline → MP3 de respaldo** (con `IConnectivityProbe` falso) y **uso de la pista precargada sin tocar la red** |
+| `LiveDiagnosticsTests` (10) | texto del panel (red con/sin conexión, pista disponible o NINGUNA, detalle de cada pista, reproductor) y ritmo del `NetworkStatusMonitor` (no repite la comprobación dentro del intervalo, reintenta al vencerlo, `force`, sonda que falla → sin conexión) |
+| `OperationLogTests` (7) | archivo y formato de línea, líneas sucesivas, concurrencia, ventana de líneas recientes, log inservible y **evento `LineWritten`** (se dispara y un suscriptor que falla no rompe el registro) |
+| `YouTubeTrackCacheTests` (24) | tomar pista una sola vez, caducidad/frescura, sustitución por playlist, tope de 3 pistas, recuperación entre sesiones, borrado de huérfanos, protección del archivo en descarga, manifiesto persistente y **`DescribeEntries`** (foto de la caché para el panel) |
+| `BootReadinessTests` (12) | veredicto de arranque por playlist («N/M listas» vs «nada») |
+| `OfflineFallbackReadinessTests` (3) + `OfflineFallbackSelectorTests` (6) | veredicto del respaldo (validado / establecido / ninguno) y elección del MP3 de respaldo |
+| `PlayHistoryStoreTests` (9) | ventana antirrepetición por playlist y persistencia del historial |
+| `PlaybackFormatSelectorTests` (7) + `PlayerStatusFormatterTests` (7) | remuestreo al formato del dispositivo (1.0x) y texto del estado del reproductor |
+| `PendingWorkSignalTests` (6) | la señal de un bit agrupa barridos repetidos y no se pierde |
+| `ModelsAndStoreTests` → `DayFlagsTests` (4) + `JsonDataStoreTests` (9) + `SoundPresetsTests` (5) | flags y texto de días, **round-trip JSON** de alarmas/config/eventos, archivos ausentes → valores por defecto, **round-trip de `SoundSelection.YouTube`** y del MP3 de respaldo, los 3 sonidos predeterminados y su **migración de ids antiguos** |
+| `ModelsAndStoreTests` → `YouTubeAudioResolverTests` (32) | extracción del id de playlist (URLs válidas/inválidas), **decisión offline → MP3 de respaldo** (con `IConnectivityProbe` falso), **uso de la pista precargada sin tocar la red**, sincronización remota fail-closed y borrado seguro |
 
 ### 5.3 Ejecución
 ```bash
@@ -133,7 +149,7 @@ dotnet format Alarmino.sln --verify-no-changes --no-restore
 El instalador se compone en un job de Windows (`scripts/package.ps1`).
 
 ### 5.5 Huecos conocidos
-- UI WPF y reproducción real de audio (prueba manual en Windows).
+- UI WPF y reproducción real de audio (prueba manual en Windows). El **panel de diagnóstico en vivo** (botón «Ver log») es UI: su parte de WPF solo está verificada por compilación; la lógica de texto y de ritmo de comprobación sí está testada en `LiveDiagnosticsTests`.
 - **Descarga y reproducción real de YouTube** (solo se testea la lógica de decisión con conectividad falsa; la red real y los streams de YouTube se validan en Windows).
 - Ciclo de instalación/desinstalación real (prueba manual; solo scripts de apoyo como `smoke-win.ps1`).
 - Comportamiento con Windows suspendido (solo cubierto a nivel de scheduler con el reloj falso).

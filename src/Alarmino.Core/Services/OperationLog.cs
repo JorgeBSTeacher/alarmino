@@ -47,6 +47,13 @@ public static class OperationLog
         }
     }
 
+    /// <summary>
+    /// Se dispara con cada línea escrita para que el panel de diagnóstico pueda
+    /// mostrar el log en vivo. Se invoca fuera del lock y un suscriptor que falle
+    /// no impide que el resto se registren.
+    /// </summary>
+    public static event Action<string>? LineWritten;
+
     /// <summary>Escribe una línea con el origen indicado. Si algo falla, no hace nada.</summary>
     public static void Write(string source, string message)
     {
@@ -68,6 +75,30 @@ public static class OperationLog
         catch
         {
             // El log nunca debe romper el funcionamiento de la aplicación.
+        }
+
+        NotifyLineWritten(line);
+    }
+
+    /// <summary>Avisa a los suscriptores de una línea nueva (sin dejar que fallen).</summary>
+    private static void NotifyLineWritten(string line)
+    {
+        Action<string>? handlers = LineWritten;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Delegate handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<string>)handler)(line);
+            }
+            catch
+            {
+                // Un panel de diagnóstico roto no puede impedir que se registre el log.
+            }
         }
     }
 

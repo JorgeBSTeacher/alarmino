@@ -2,7 +2,7 @@
 
 > Documento de referencia única para el desarrollo de **Alarmino**.
 > Cualquier discrepancia entre este documento y el código debe resolverse actualizando uno de los dos (prevalece el código en ejecución, pero se registra aquí el cambio).
-> Última actualización: 2026-10-20 · Versión v0.1.5 (arranque fiable y mejoras de YouTube)
+> Última actualización: 2026-10-22 · Versión v0.1.6 (panel de diagnóstico en vivo)
 
 ## 1. Visión general
 
@@ -64,6 +64,7 @@
 - **Limpieza de playlists abandonadas**: si una alarma cambia de playlist, la anterior deja de usarla ninguna alarma. Su pista se retira de la caché **por pertenencia local de id** (nunca consultando la red), tanto **al arrancar** como **al guardar ajustes o alarmas** (sin esperar al reinicio). No se confunde con «la descarga remota falló»: una playlist que sigue en uso conserva su pista pase lo que pase. Esta limpieza no ejecuta E/S en el hilo de la interfaz y agrupa las peticiones repetidas en una sola.
 - **Antirrepetición de canciones**: una pista ya reproducida no vuelve a elegirse durante una **ventana de días** configurable (por defecto **7**). Si la ventana se agota sin candidatos, se registra en el log y se repite; nunca se deja la alarma muda.
 - **Log de operaciones por sesión**: las decisiones de arranque, descarga, sincronización y borrado se registran, y las últimas líneas son visibles en Configuración → pestaña **Diagnóstico**.
+- **Panel de diagnóstico en vivo (botón «Ver log»)** en la ventana principal: al pulsarlo se despliega un panel con, en primer plano, **dos indicadores con color** —**red** (con/sin conexión y cuándo se comprobó) y **pista descargada** (si hay alguna lista, y cuántas de cuántas)—, debajo el **detalle** (cada pista de la caché con su playlist, tamaño, si está consumida y a qué hora se descargó; estado del reproductor; si hay una descarga en curso) y debajo el **registro de la sesión en vivo**, que se va rellenando solo y se desplaza al final. Al abrirlo se carga el historial reciente; el estado se refresca cada 2 s y **la red se comprueba como mucho cada 15 s** (si el panel está cerrado no se toca la red). Los cambios de conexión quedan anotados en el propio log, de modo que el historial explica por qué una alarma usó el respaldo.
 - **Estado visible del reproductor**: la ventana muestra qué está sonando y **los segundos transcurridos**, para saber de un vistazo que el audio avanza.
 - **Archivos y manifiesto**: la caché persiste un `manifest.json` con la pista consumida y su tamaño, de modo que una descarga truncada se detecta en el siguiente arranque (peso mínimo + tamaño declarado) y se descarta.
 
@@ -147,7 +148,10 @@ src/Alarmino.Core (net8.0, sin WPF — lógica verificable con tests)
     ├── OfflineFallbackReadiness.cs  veredicto del respaldo sin conexión
     ├── OfflineFallbackSelector.cs   elección del MP3 de respaldo
     ├── PlayHistoryStore.cs          ventana antirrepetición por playlist
-    ├── OperationLog.cs              log por sesión (líneas recientes)
+    ├── OperationLog.cs              log por sesión (líneas recientes + evento en vivo)
+    ├── LiveDiagnostics.cs           foto de estado (red, pistas, reproductor) y su texto
+    ├── NetworkStatusMonitor.cs      vigilancia de la conexión sin martillear la red
+    ├── TrackSanity.cs               integridad de la descarga (tamaño del manifiesto)
     └── PendingWorkSignal.cs         señal de un bit que agrupa barridos repetidos
 
 src/Alarmino.Tests (xUnit)   modelos, JsonDataStore, scheduler (reloj falso),

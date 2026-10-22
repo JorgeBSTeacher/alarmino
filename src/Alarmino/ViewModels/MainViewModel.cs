@@ -37,6 +37,7 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _isAlarmBlinkOn;
     private bool _isRainBlinkOn;
     private bool _blinkIsAlarm;
+    private bool _isLogExpanded;
     private DispatcherTimer? _blinkTimer;
     private string? _activeSoundLabel;
     private DateTime _playbackStartedUtc;
@@ -44,6 +45,29 @@ public sealed partial class MainViewModel : ObservableObject
     private string _playerStatusText = PlayerStatusFormatter.IdleText;
     private DateTime _nextPrefetchSweepUtc = DateTime.MinValue;
     private int _prefetchRunning;
+
+    // ---------- Panel de diagnóstico en vivo ----------
+
+    /// <summary>Líneas del log de la sesión (en vivo, las últimas <see cref="OperationLog.MaxRecentLines"/>).</summary>
+    private readonly ObservableCollection<string> _logLines = new();
+
+    /// <summary>Vigila la conexión sin martillear la red.</summary>
+    private readonly NetworkStatusMonitor _network;
+
+    /// <summary>Estado de la red del último panel de diagnóstico.</summary>
+    private NetworkState _networkState = NetworkState.Unknown;
+
+    /// <summary>Detalle del estado (caché y reproductor), ya redactado.</summary>
+    private string _diagnosticsDetails = string.Empty;
+
+    /// <summary>Evita dos refrescos del panel a la vez.</summary>
+    private int _refreshingDiagnostics;
+
+    /// <summary>Próxima vez que se refresca el panel (cada 2 s).</summary>
+    private DateTime _nextDiagnosticsRefreshUtc = DateTime.MinValue;
+
+    /// <summary>Cada cuánto se refresca el panel de diagnóstico (la red se comprueba aparte).</summary>
+    private const double DiagnosticsRefreshSeconds = 2;
 
     // El barrido de playlists abandonadas se pide desde cada cambio de ajustes o
     // de alarma (muchos llamadores) y se ejecuta una sola vez por recojo: sin
@@ -63,9 +87,14 @@ public sealed partial class MainViewModel : ObservableObject
             resolvePresetFile: id => SoundPresets.ResolveFilePath(id, _settings.PresetOverrides),
             youtube: _youtube,
             resolveFallbackFile: () => _settings.OfflineFallbackFilePath);
+        _network = new NetworkStatusMonitor(_youtube.Connectivity);
         _evaluator = new SchedulerEvaluator();
         _themes = new ThemeService();
         _dispatcher = Dispatcher.CurrentDispatcher;
+
+        // La suscripción al log va después de tener el despachador: una línea
+        // escrita entre medias saltaría al recibirla en otro hilo.
+        OperationLog.LineWritten += OnOperationLogLine;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _timer.Tick += OnTick;
         _volumePercent = _settings.GlobalVolumePercent;
@@ -142,7 +171,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ---------- Propiedades de estado ----------
 
-    public string AppVersion => "Alarmino v0.1.4";
+    public string AppVersion => "Alarmino v0.1.6";
 
     public bool MasterEnabled
     {
@@ -483,6 +512,158 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>Marca el arranque del contador de reproducción (el «00:00» visible).</summary>
     private void MarkPlaybackStarted() => _playbackStartedUtc = DateTime.UtcNow;
+
+    // ---------- Panel de diagnóstico en vivo ----------
+
+    /// <summary>Líneas del log de la sesión, en vivo (las más recientes al final).</summary>
+    public ObservableCollection<string> LogLines => _logLines;
+
+    /// <summary>
+    /// True si el panel de log está desplegado. Lo mueve el botón «Ver log» de la
+    /// ventana principal; al abrirlo se carga el historial y se comprueba el estado.
+    /// </summary>
+    public bool IsLogExpanded
+    {
+        get => _isLogExpanded;
+        set
+        {
+            if (SetProperty(ref _isLogExpanded, value))
+            {
+                OnLogVisibilityChanged();
+            }
+        }
+    }
+
+    /// <summary>Estado de la red tal y como se muestra en el panel.</summary>
+    public NetworkState NetworkState => _networkState;
+
+    /// <summary>True si hay conexión (el indicador se pinta en verde).</summary>
+    public bool IsNetworkOnline => _networkState == NetworkState.Online;
+
+    /// <summary>Texto del indicador de red: con/sin conexión y cuándo se comprobó.</summary>
+    public string NetworkStatusText => DiagnosticsFormatter.DescribeNetwork(_networkState, _network.CheckedUtc);
+
+    /// <summary>Texto del indicador de pistas: si hay alguna descargada y lista.</summary>
+    public string TrackStatusText => DiagnosticsFormatter.DescribeTracks(
+        _youtube.ReadyTrackCount,
+        _youtube.TargetTrackCount);
+
+    /// <summary>True si hay alguna pista descargada lista (el indicador se pinta en verde).</summary>
+    public bool HasReadyTrack => _youtube.ReadyTrackCount > 0;
+
+    /// <summary>Detalle del estado: caché de pistas y reproductor.</summary>
+    public string DiagnosticsDetails => _diagnosticsDetails;
+
+    /// <summary>Al desplegar el panel se carga el historial y se comprueba el estado.</summary>
+    private void OnLogVisibilityChanged()
+    {
+        if (!IsLogExpanded)
+        {
+            return;
+        }
+
+        _logLines.Clear();
+        foreach (string line in OperationLog.RecentLines)
+        {
+            _logLines.Add(line);
+        }
+
+        _ = RefreshDiagnosticsAsync(force: true);
+    }
+
+    /// <summary>
+    /// Recibe las líneas del log desde cualquier hilo (el log se escribe en
+    /// segundo plano) y las lleva a la colección de la vista.
+    /// </summary>
+    private void OnOperationLogLine(string line)
+    {
+        if (_dispatcher.CheckAccess())
+        {
+            AppendLogLine(line);
+            return;
+        }
+
+        _dispatcher.BeginInvoke(() => AppendLogLine(line));
+    }
+
+    /// <summary>Añade una línea al log visible y descarta las más antiguas.</summary>
+    private void AppendLogLine(string line)
+    {
+        _logLines.Add(line);
+
+        while (_logLines.Count > OperationLog.MaxRecentLines)
+        {
+            _logLines.RemoveAt(0);
+        }
+    }
+
+    /// <summary>
+    /// Refresca el panel de diagnóstico: red, pistas en caché y reproductor. La
+    /// red se comprueba como mucho cada 15 s (lo decide el monitor) y el resto
+    /// es de disco, así que repetirlo cada 2 s no cuesta nada.
+    /// </summary>
+    private async Task RefreshDiagnosticsAsync(bool force = false)
+    {
+        if (Interlocked.Exchange(ref _refreshingDiagnostics, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            NetworkState previous = _networkState;
+            NetworkState state = await _network.RefreshAsync(force).ConfigureAwait(true);
+            _networkState = state;
+
+            if (state != previous && state != NetworkState.Unknown)
+            {
+                // El cambio de red queda anotado en el propio log: el historial
+                // explica por qué una alarma usó el respaldo.
+                OperationLog.Write("red", state == NetworkState.Online
+                    ? "conexión disponible."
+                    : "sin conexión con YouTube.");
+            }
+
+            var snapshot = new DiagnosticsSnapshot(
+                state,
+                _network.CheckedUtc,
+                _youtube.ReadyTrackCount,
+                _youtube.TargetTrackCount,
+                _youtube.DescribeCachedTracks(),
+                _isDownloading,
+                PlayerStatusText);
+
+            _diagnosticsDetails = string.Join(Environment.NewLine, DiagnosticsFormatter.Describe(snapshot));
+
+            OnPropertyChanged(nameof(NetworkState));
+            OnPropertyChanged(nameof(NetworkStatusText));
+            OnPropertyChanged(nameof(IsNetworkOnline));
+            OnPropertyChanged(nameof(TrackStatusText));
+            OnPropertyChanged(nameof(HasReadyTrack));
+            OnPropertyChanged(nameof(DiagnosticsDetails));
+        }
+        catch
+        {
+            // Un panel de diagnóstico roto no puede impedir que suene la alarma.
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _refreshingDiagnostics, 0);
+        }
+    }
+
+    /// <summary>Refresca el panel como mucho cada <see cref="DiagnosticsRefreshSeconds"/> segundos.</summary>
+    private void MaybeRefreshDiagnostics()
+    {
+        DateTime now = DateTime.UtcNow;
+        if (now < _nextDiagnosticsRefreshUtc)
+        {
+            return;
+        }
+
+        _nextDiagnosticsRefreshUtc = now.AddSeconds(DiagnosticsRefreshSeconds);
+        _ = RefreshDiagnosticsAsync();
+    }
 
     /// <summary>Anota el estado de descarga que llega del resolutor (ya en el hilo de interfaz).</summary>
     private void SetDownloadingActivity(bool downloading)
@@ -1240,6 +1421,13 @@ public sealed partial class MainViewModel : ObservableObject
 
         // Refresca el estado visible (y el contador de segundos) sin un temporizador extra.
         RefreshPlayerStatus();
+
+        // El panel de log solo se refresca si está desplegado: si no, no hay
+        // motivo para tocar la red ni el disco.
+        if (IsLogExpanded)
+        {
+            MaybeRefreshDiagnostics();
+        }
     }
 
     /// <summary>

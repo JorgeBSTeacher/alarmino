@@ -133,6 +133,27 @@ public interface IYouTubeAudioResolver
     /// nulo se usa el último id resuelto (<see cref="YouTubeAudioResolver.LastVideoId"/>).
     /// </summary>
     void RecordPlay(string? playlistUrl, string? videoId = null);
+
+    /// <summary>
+    /// Cuántas pistas hay sin usar y listas para la próxima alarma. Si es cero,
+    /// la alarma tendrá que descargar en el momento (o usar el MP3 de respaldo).
+    /// </summary>
+    int ReadyTrackCount { get; }
+
+    /// <summary>Objetivo de pistas del búfer.</summary>
+    int TargetTrackCount { get; }
+
+    /// <summary>
+    /// Detalle de las pistas guardadas en caché, para el panel de diagnóstico.
+    /// Es solo de disco: no toca la red.
+    /// </summary>
+    IReadOnlyList<CachedTrackInfo> DescribeCachedTracks();
+
+    /// <summary>
+    /// Comprueba si hay conexión con YouTube. El resultado se cachea unos
+    /// segundos para no repetir la petición.
+    /// </summary>
+    Task<bool> IsOnlineAsync();
 }
 
 /// <summary>Implementación de <see cref="IYouTubeAudioResolver"/> con YoutubeExplode.</summary>
@@ -255,6 +276,27 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
 
     /// <summary>Historial de reproducción usado para la ventana antirrepetición.</summary>
     public PlayHistoryStore History => _history;
+
+    /// <summary>
+    /// Pistas sin usar y presentes en disco: las que sirven para la próxima
+    /// alarma sin tener que descargar nada.
+    /// </summary>
+    public int ReadyTrackCount => _cache.GetBufferState(TargetBufferCount).Ready;
+
+    /// <summary>Objetivo de pistas del búfer.</summary>
+    public int TargetTrackCount => TargetBufferCount;
+
+    /// <summary>Detalle de las pistas guardadas en caché (panel de diagnóstico).</summary>
+    public IReadOnlyList<CachedTrackInfo> DescribeCachedTracks() => _cache.DescribeEntries();
+
+    /// <summary>Comprueba si hay conexión con YouTube.</summary>
+    public Task<bool> IsOnlineAsync() => _connectivity.IsOnlineAsync();
+
+    /// <summary>
+    /// Sonda de conectividad usada por el panel de diagnóstico. Se expone para
+    /// que la vista pueda vigilar la red sin tener su propia comprobación.
+    /// </summary>
+    public IConnectivityProbe Connectivity => _connectivity;
 
     /// <summary>
     /// Registra que una pista ha sonado. Lo llama el servicio de audio cuando el

@@ -23,3 +23,6 @@ appsettings.local.json
 # --- Carpeta de trabajo con los audios originales ---
 # La copia canónica que se empaqueta está en src/Alarmino.Core/PresetsDefault/
 defaultsound/
+
+# --- Índice local de CodeGraph (no se versiona) ---
+.codegraph/

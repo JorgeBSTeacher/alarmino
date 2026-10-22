@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Threading;
@@ -23,6 +24,25 @@ public partial class MainWindow : Window
     {
         ViewModel.EditRequested += OnEditRequested;
         ViewModel.PlaybackFinished += OnPlaybackFinished;
+
+        // El registro se dibuja solo al final: se sigue la última línea sin
+        // que el usuario tenga que bajar el scroll a mano.
+        ViewModel.LogLines.CollectionChanged += OnLogLinesChanged;
+    }
+
+    private void OnLogLinesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        // Con el panel oculto no hay nada que desplazar: el registro sigue
+        // escribiéndose y guardándose, pero la vista no hace trabajo inútil.
+        // Al abrirlo se recarga el historial, que vuelve a disparar este evento.
+        if (!ViewModel.IsLogExpanded)
+        {
+            return;
+        }
+
+        // El scroll se pide después del layout: durante la medición el visor
+        // todavía no sabe cuán alto es el contenido.
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, () => LogScroll.ScrollToEnd());
     }
 
     private void OnEditRequested(AlarmViewModel? existing)

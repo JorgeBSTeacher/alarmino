@@ -158,6 +158,28 @@ public sealed class YouTubeTrackCache
     }
 
     /// <summary>
+    /// Una foto de las pistas guardadas para el panel de diagnóstico en vivo:
+    /// qué hay en caché, de qué playlist, si está consumida y cuánto ocupa. Es
+    /// solo de disco: no toca la red y no puede fallar.
+    /// </summary>
+    public IReadOnlyList<CachedTrackInfo> DescribeEntries()
+    {
+        lock (_gate)
+        {
+            return _entries
+                .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => new CachedTrackInfo(
+                    kv.Key,
+                    kv.Value.VideoId,
+                    kv.Value.Consumed,
+                    File.Exists(kv.Value.FilePath),
+                    TryGetFileSize(kv.Value.FilePath) ?? 0,
+                    kv.Value.DownloadedAtUtc))
+                .ToList();
+        }
+    }
+
+    /// <summary>
     /// Recupera las pistas que ya estaban descargadas en la carpeta (sesiones
     /// anteriores) para poder sonar a la hora sin descargar nada. Una pista que
     /// no supera las comprobaciones de integridad (p. ej. truncada por un corte

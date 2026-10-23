@@ -2,7 +2,8 @@
 
 **Branch:** `alarmino-youtube` (existing)
 **Created:** 2026-10-23
-**Delivery strategy:** `ask-on-risk` (forecast ~1,150 authored lines > 400; ask once for the chain strategy before any PR work)
+**Delivery strategy:** `ask-on-risk` (forecast ~1,150 authored lines > 400; ask once for the chain strategy before any PR work)  
+**MaxPlaylistItems:** 25 (changed from 300)
 **Runner:** `/home/jorge/.dotnet/dotnet test src/Alarmino.Tests/Alarmino.Tests.csproj` (`dotnet` is not on PATH)
 
 ## Objective
@@ -45,7 +46,7 @@ In scope:
 - SSOT, version bump and tests updated with the behavior.
 
 Out of scope: push/PR/merge (human-owned), remote deletion policy changes (kept as-is),
-playlists larger than the existing `MaxPlaylistItems` read cap (300, kept and documented).
+playlists larger than the existing `MaxPlaylistItems` read cap (25, kept and documented).
 
 ## Acceptance criteria
 

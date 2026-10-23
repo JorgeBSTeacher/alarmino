@@ -165,7 +165,7 @@ public sealed class YouTubeAudioResolver : IYouTubeAudioResolver, IDisposable
     /// saber si la lectura quedó entera se compara lo leído con el total que
     /// declara YouTube (<see cref="PlaylistSnapshot.DeclaredCount"/>).
     /// </summary>
-    public const int MaxPlaylistItems = 300;
+    public const int MaxPlaylistItems = 25;
     /// <summary>Tiempo mínimo entre dos descargas de precarga de la misma playlist.</summary>
     private static readonly TimeSpan MinPrefetchInterval = TimeSpan.FromMinutes(30);
 

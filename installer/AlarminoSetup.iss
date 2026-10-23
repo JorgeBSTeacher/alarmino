@@ -3,7 +3,7 @@
 ; Requiere el exe publicado en artifacts\win-x64\Alarmino.exe (scripts\publish.ps1)
 
 #define MyAppName "Alarmino"
-#define MyAppVersion "0.1.6"
+#define MyAppVersion "0.1.7"
 #define MyAppPublisher "JorgeBSTeacher"
 #define MyAppExeName "Alarmino.exe"
 #define MyAppAssocName MyAppName + " File"

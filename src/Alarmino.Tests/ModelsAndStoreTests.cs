@@ -115,8 +115,8 @@ public class JsonDataStoreTests
             var settings = new JsonDataStore(dir).LoadSettings();
 
             Assert.Equal(42, settings.GlobalVolumePercent);
-            Assert.Equal(7, settings.NoRepeatDays);
-            Assert.Equal(3, settings.TargetBufferCount);
+            Assert.Equal(10, settings.NoRepeatDays);
+            // TargetBufferCount is removed in the new policy.
         }
         finally
         {
@@ -128,18 +128,17 @@ public class JsonDataStoreTests
     }
 
     [Fact]
-    public void RoundTrips_the_anti_repeat_window_and_the_buffer_target()
+    public void RoundTrips_the_anti_repeat_window()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
             var store = new JsonDataStore(dir);
-            store.SaveSettings(new AppSettings { NoRepeatDays = 14, TargetBufferCount = 5 });
+            store.SaveSettings(new AppSettings { NoRepeatDays = 14 });
 
             var settings = store.LoadSettings();
 
             Assert.Equal(14, settings.NoRepeatDays);
-            Assert.Equal(5, settings.TargetBufferCount);
         }
         finally
         {
@@ -449,24 +448,30 @@ public class YouTubeAudioResolverTests
     }
 
     [Fact]
-    public async Task Prefetch_does_nothing_when_a_fresh_track_exists()
+    public async Task Prefetch_downloads_every_missing_track_through_the_seam()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Directory.CreateDirectory(dir);
-            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL123abc", "videoA", "m4a"));
-            File.WriteAllText(file, "audio");
-
             var cache = new YouTubeTrackCache(dir);
-            cache.Register("PL123abc", "videoA", file, DateTime.UtcNow);
-
-            var probe = new FakeProbe(online: true);
-            var resolver = new YouTubeAudioResolver(cache: cache, connectivity: probe);
+            var download = new RecordingDownload(dir);
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(
+                    new PlaylistSnapshot(["videoA", "videoB", "videoC"], 3)),
+                downloadTrack: download.DownloadAsync);
 
             await resolver.PrefetchAsync("https://www.youtube.com/playlist?list=PL123abc");
 
-            Assert.Equal(0, probe.Calls);
+            Assert.Equal(["videoA", "videoB", "videoC"], download.VideoIds);
+            Assert.Equal(3, cache.GetDownloadedCount("PL123abc"));
+
+            // Una segunda pasada no vuelve a descargar nada.
+            await resolver.PrefetchAsync("https://www.youtube.com/playlist?list=PL123abc", force: true);
+
+            Assert.Equal(3, download.VideoIds.Count);
+            Assert.Equal(3, cache.GetDownloadedCount("PL123abc"));
         }
         finally
         {
@@ -478,23 +483,27 @@ public class YouTubeAudioResolverTests
     }
 
     [Fact]
-    public void BufferState_counts_ready_tracks_against_the_target()
+    public async Task Prefetch_never_redownloads_a_track_already_on_disk()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Directory.CreateDirectory(dir);
-            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL1", "videoA", "m4a"));
-            File.WriteAllText(file, "audio");
-
+            string existing = CreatePlayableFile(dir, "PL123abc", "videoA");
             var cache = new YouTubeTrackCache(dir);
-            cache.Register("PL1", "videoA", file, DateTime.UtcNow);
+            cache.Register("PL123abc", "videoA", existing, DateTime.UtcNow);
 
-            BufferState state = cache.GetBufferState(3);
+            var download = new RecordingDownload(dir);
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(
+                    new PlaylistSnapshot(["videoA", "videoB"], 2)),
+                downloadTrack: download.DownloadAsync);
 
-            Assert.Equal(1, state.Ready);
-            Assert.Equal(3, state.Target);
-            Assert.False(state.IsFull);
+            await resolver.PrefetchAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            Assert.Equal(["videoB"], download.VideoIds);
+            Assert.Equal(2, cache.GetDownloadedCount("PL123abc"));
         }
         finally
         {
@@ -506,24 +515,26 @@ public class YouTubeAudioResolverTests
     }
 
     [Fact]
-    public void BufferState_ignores_consumed_tracks()
+    public async Task Prefetch_survives_one_failing_track_and_downloads_the_rest()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Directory.CreateDirectory(dir);
-            string file = Path.Combine(dir, YouTubeTrackCache.BuildFileName("PL1", "videoA", "m4a"));
-            File.WriteAllText(file, "audio");
-
             var cache = new YouTubeTrackCache(dir);
-            cache.Register("PL1", "videoA", file, DateTime.UtcNow);
-            Assert.True(cache.TryTake("PL1", out _, out _));  // la pista suena
+            var download = new RecordingDownload(dir);
+            download.FailVideoIds.Add("videoB");
 
-            BufferState state = cache.GetBufferState(3);
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(
+                    new PlaylistSnapshot(["videoA", "videoB", "videoC"], 3)),
+                downloadTrack: download.DownloadAsync);
 
-            // La pista ya sonada no cuenta como lista para el próximo arranque.
-            Assert.Equal(0, state.Ready);
-            Assert.False(state.IsFull);
+            await resolver.PrefetchAsync("https://www.youtube.com/playlist?list=PL123abc");
+
+            Assert.Equal(["videoA", "videoB", "videoC"], download.VideoIds);
+            Assert.Equal(["videoA", "videoC"], cache.GetVideoIds("PL123abc").Order().ToArray());
         }
         finally
         {
@@ -535,20 +546,25 @@ public class YouTubeAudioResolverTests
     }
 
     [Fact]
-    public void BufferState_is_full_when_the_ready_count_reaches_the_target()
+    public async Task PrefetchAndSync_downloads_through_the_seam_instead_of_self_blocking()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Directory.CreateDirectory(dir);
             var cache = new YouTubeTrackCache(dir);
-            cache.Register("PL1", "videoA", CreatePlayableFile(dir, "PL1", "videoA"), DateTime.UtcNow);
-            cache.Register("PL2", "videoB", CreatePlayableFile(dir, "PL2", "videoB"), DateTime.UtcNow);
+            var download = new RecordingDownload(dir);
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(
+                    new PlaylistSnapshot(["videoA", "videoB"], 2)),
+                downloadTrack: download.DownloadAsync);
 
-            BufferState state = cache.GetBufferState(2);
+            await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
 
-            Assert.Equal(2, state.Ready);
-            Assert.True(state.IsFull);
+            // El pestillo se toma una vez: la sincronización de arranque descarga de verdad.
+            Assert.Equal(["videoA", "videoB"], download.VideoIds);
+            Assert.Equal(2, cache.GetDownloadedCount("PL123abc"));
         }
         finally
         {
@@ -560,16 +576,28 @@ public class YouTubeAudioResolverTests
     }
 
     [Fact]
-    public void BufferState_of_a_non_positive_target_is_always_full()
+    public async Task Resolve_picks_a_downloaded_track_without_touching_the_remote_list()
     {
         var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
         try
         {
-            BufferState state = new YouTubeTrackCache(dir).GetBufferState(0);
+            string first = CreatePlayableFile(dir, "PL123abc", "videoA");
+            string second = CreatePlayableFile(dir, "PL123abc", "videoB");
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", first, DateTime.UtcNow);
+            cache.Register("PL123abc", "videoB", second, DateTime.UtcNow);
 
-            Assert.Equal(0, state.Ready);
-            Assert.Equal(0, state.Target);
-            Assert.True(state.IsFull);
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: false),
+                // Any remote read would throw: the downloaded set is enough.
+                playlistVideoIds: (_, _) => throw new InvalidOperationException("no debe consultarse la red"));
+
+            string? result = await resolver.ResolveAsync(
+                "https://www.youtube.com/playlist?list=PL123abc", @"C:\datos\respaldo.mp3", CancellationToken.None);
+
+            Assert.Contains(result, new[] { first, second });
+            Assert.Contains(resolver.LastVideoId, new[] { "videoA", "videoB" });
         }
         finally
         {
@@ -577,6 +605,136 @@ public class YouTubeAudioResolverTests
             {
                 Directory.Delete(dir, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task Resolve_avoids_a_track_played_within_the_window()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string first = CreatePlayableFile(dir, "PL123abc", "videoA");
+            string second = CreatePlayableFile(dir, "PL123abc", "videoB");
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", first, DateTime.UtcNow);
+            cache.Register("PL123abc", "videoB", second, DateTime.UtcNow);
+
+            var history = new PlayHistoryStore(dir);
+            history.Record("PL123abc", "videoA", DateTime.UtcNow.AddDays(-5));
+
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: false),
+                history: history,
+                playlistVideoIds: (_, _) => throw new InvalidOperationException("no debe consultarse la red"));
+
+            string? result = await resolver.ResolveAsync(
+                "https://www.youtube.com/playlist?list=PL123abc", null, CancellationToken.None);
+
+            Assert.Equal(second, result);
+            Assert.Equal("videoB", resolver.LastVideoId);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Resolve_repeats_and_logs_when_every_downloaded_track_is_in_the_window()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string first = CreatePlayableFile(dir, "PL123abc", "videoA");
+            string second = CreatePlayableFile(dir, "PL123abc", "videoB");
+            var cache = new YouTubeTrackCache(dir);
+            cache.Register("PL123abc", "videoA", first, DateTime.UtcNow);
+            cache.Register("PL123abc", "videoB", second, DateTime.UtcNow);
+
+            var history = new PlayHistoryStore(dir);
+            history.Record("PL123abc", "videoA", DateTime.UtcNow.AddDays(-5));
+            history.Record("PL123abc", "videoB", DateTime.UtcNow.AddDays(-5));
+
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: false),
+                history: history,
+                playlistVideoIds: (_, _) => throw new InvalidOperationException("no debe consultarse la red"));
+
+            string? result = await resolver.ResolveAsync(
+                "https://www.youtube.com/playlist?list=PL123abc", null, CancellationToken.None);
+
+            Assert.Contains(result, new[] { first, second });
+            Assert.Contains(
+                OperationLog.RecentLines,
+                line => line.Contains("ventana antirrepetición agotada") && line.Contains("PL123abc"));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Resolve_with_no_downloaded_track_uses_the_online_live_download()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var cache = new YouTubeTrackCache(dir);
+            var download = new RecordingDownload(dir);
+            var resolver = new YouTubeAudioResolver(
+                cache: cache,
+                connectivity: new FakeProbe(online: true),
+                playlistVideoIds: (_, _) => Task.FromResult(new PlaylistSnapshot(["videoA"], 1)),
+                downloadTrack: download.DownloadAsync);
+
+            string? result = await resolver.ResolveAsync(
+                "https://www.youtube.com/playlist?list=PL123abc", @"C:\datos\respaldo.mp3", CancellationToken.None);
+
+            Assert.Equal(["videoA"], download.VideoIds);
+            Assert.NotNull(result);
+            Assert.True(File.Exists(result));
+            Assert.Equal("videoA", resolver.LastVideoId);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Costura de descarga para las pruebas: crea un archivo reproducible en la
+    /// caché y anota qué vídeos se le pidieron, sin tocar la red. Un id de
+    /// <see cref="FailVideoIds"/> simula un fallo de descarga.
+    /// </summary>
+    private sealed class RecordingDownload(string dir)
+    {
+        public List<string> VideoIds { get; } = [];
+
+        public HashSet<string> FailVideoIds { get; } = new(StringComparer.Ordinal);
+
+        public Task<string> DownloadAsync(string playlistId, string videoId, CancellationToken cancellationToken)
+        {
+            VideoIds.Add(videoId);
+
+            if (FailVideoIds.Contains(videoId))
+            {
+                throw new InvalidOperationException("fallo de descarga simulado");
+            }
+
+            return Task.FromResult(CreatePlayableFile(dir, playlistId, videoId));
         }
     }
 
@@ -639,20 +797,6 @@ public class YouTubeAudioResolverTests
     }
 
     [Fact]
-    public void TargetBufferCount_is_clamped_to_the_cache_capacity()
-    {
-        var resolver = new YouTubeAudioResolver(
-            cacheDir: Path.Combine(Path.GetTempPath(), "alarmino-yt-" + Guid.NewGuid().ToString("N")),
-            connectivity: new FakeProbe(online: false));
-
-        resolver.TargetBufferCount = 99;
-        Assert.Equal(YouTubeTrackCache.MaxTracks, resolver.TargetBufferCount);
-
-        resolver.TargetBufferCount = -3;
-        Assert.Equal(0, resolver.TargetBufferCount);
-    }
-
-    [Fact]
     public void NoRepeatDays_never_goes_below_zero()
     {
         var resolver = new YouTubeAudioResolver(
@@ -709,7 +853,7 @@ public class YouTubeAudioResolverTests
 
             // Sin conexión no hay lista remota fiable: la pista se queda donde está.
             Assert.True(File.Exists(file));
-            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+            Assert.Equal(["videoA"], cache.GetVideoIds("PL123abc"));
         }
         finally
         {
@@ -754,7 +898,7 @@ public class YouTubeAudioResolverTests
 
             // Un fallo de consulta NUNCA puede vaciar la caché del usuario.
             Assert.True(File.Exists(file));
-            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+            Assert.Equal(["videoA"], cache.GetVideoIds("PL123abc"));
         }
         finally
         {
@@ -785,12 +929,13 @@ public class YouTubeAudioResolverTests
                 cache: cache,
                 connectivity: new FakeProbe(online: true),
                 playlistVideoIds: (_, _) => Task.FromResult(
-                    new PlaylistSnapshot(["videoB", "videoC", "videoD"], 3)));
+                    new PlaylistSnapshot(["videoB", "videoC", "videoD"], 3)),
+                downloadTrack: ThrowingDownloadAsync);
 
             await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
 
             Assert.False(File.Exists(file));
-            Assert.Null(cache.PeekVideoId("PL123abc"));
+            Assert.Empty(cache.GetVideoIds("PL123abc"));
         }
         finally
         {
@@ -823,12 +968,13 @@ public class YouTubeAudioResolverTests
                 cache: cache,
                 connectivity: new FakeProbe(online: true),
                 playlistVideoIds: (_, _) => Task.FromResult(
-                    new PlaylistSnapshot(remote, YouTubeAudioResolver.MaxPlaylistItems)));
+                    new PlaylistSnapshot(remote, YouTubeAudioResolver.MaxPlaylistItems)),
+                downloadTrack: ThrowingDownloadAsync);
 
             await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
 
             Assert.False(File.Exists(file));
-            Assert.Null(cache.PeekVideoId("PL123abc"));
+            Assert.Empty(cache.GetVideoIds("PL123abc"));
         }
         finally
         {
@@ -860,12 +1006,13 @@ public class YouTubeAudioResolverTests
                 playlistVideoIds: (_, _) => Task.FromResult(
                     new PlaylistSnapshot(
                         Enumerable.Range(0, YouTubeAudioResolver.MaxPlaylistItems).Select(i => $"video{i}").ToList(),
-                        500)));
+                        500)),
+                downloadTrack: ThrowingDownloadAsync);
 
             await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
 
             Assert.True(File.Exists(file));
-            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+            Assert.Equal(["videoA"], cache.GetVideoIds("PL123abc"));
             Assert.Contains(
                 OperationLog.RecentLines,
                 line => line.Contains("sincronización pospuesta") && line.Contains("límite"));
@@ -903,12 +1050,13 @@ public class YouTubeAudioResolverTests
                 {
                     "truncated" => new PlaylistSnapshot(["videoB", "videoC"], 400),
                     _ => new PlaylistSnapshot(["videoB", "videoC"], 0),
-                }));
+                }),
+                downloadTrack: ThrowingDownloadAsync);
 
             await resolver.PrefetchAndSyncAsync("https://www.youtube.com/playlist?list=PL123abc");
 
             Assert.True(File.Exists(file));
-            Assert.Equal("videoA", cache.PeekVideoId("PL123abc"));
+            Assert.Equal(["videoA"], cache.GetVideoIds("PL123abc"));
         }
         finally
         {
@@ -948,9 +1096,9 @@ public class YouTubeAudioResolverTests
             // la playlist que sigue en uso.
             Assert.Equal(0, probe.Calls);
             Assert.False(File.Exists(abandoned));
-            Assert.Null(cache.PeekVideoId("PLgone"));
+            Assert.Empty(cache.GetVideoIds("PLgone"));
             Assert.True(File.Exists(used));
-            Assert.Equal("videoA", cache.PeekVideoId("PLused"));
+            Assert.Equal(["videoA"], cache.GetVideoIds("PLused"));
         }
         finally
         {
@@ -981,7 +1129,7 @@ public class YouTubeAudioResolverTests
             resolver.RemovePlaylistsNotIn(new HashSet<string>());
 
             Assert.True(File.Exists(file));
-            Assert.Equal("videoA", cache.PeekVideoId("PLa"));
+            Assert.Equal(["videoA"], cache.GetVideoIds("PLa"));
         }
         finally
         {
@@ -992,10 +1140,16 @@ public class YouTubeAudioResolverTests
         }
     }
 
+    /// <summary>
+    /// Costura de descarga que siempre falla: las pruebas de sincronización
+    /// inyectan listas remotas sin querer tocar la red real.
+    /// </summary>
+    private static Task<string> ThrowingDownloadAsync(string playlistId, string videoId, CancellationToken cancellationToken) =>
+        Task.FromException<string>(new InvalidOperationException("descarga no disponible en la prueba"));
+
     /// <summary>Contenido que supera las comprobaciones de integridad de <see cref="TrackSanity"/>.</summary>
     private static byte[] PlayableBytes()
-    {
-        byte[] data = new byte[40 * 1024];
+    {        byte[] data = new byte[40 * 1024];
         data[0] = 0xFF;
         data[1] = 0xFB;
         data[2] = 0xA0;
@@ -1060,11 +1214,10 @@ public class SoundPresetsTests
     }
 
     [Fact]
-    public void AppSettings_defaults_include_a_week_without_repeats_and_a_buffer_of_three()
+    public void AppSettings_defaults_include_a_week_without_repeats()
     {
         var settings = new AppSettings();
 
-        Assert.Equal(7, settings.NoRepeatDays);
-        Assert.Equal(3, settings.TargetBufferCount);
+        Assert.Equal(10, settings.NoRepeatDays);
     }
 }

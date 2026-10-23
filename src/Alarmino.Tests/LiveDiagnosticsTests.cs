@@ -7,16 +7,14 @@ public sealed class LiveDiagnosticsTests
 {
     private static DiagnosticsSnapshot Snapshot(
         NetworkState network = NetworkState.Online,
-        int ready = 2,
-        int target = 3,
+        int downloaded = 2,
         IReadOnlyList<CachedTrackInfo>? tracks = null,
         bool downloadActive = false,
         string playerState = "En espera") =>
         new(
             network,
             DateTime.UtcNow,
-            ready,
-            target,
+            downloaded,
             tracks ?? [],
             downloadActive,
             playerState);
@@ -27,24 +25,24 @@ public sealed class LiveDiagnosticsTests
         IReadOnlyList<string> lines = DiagnosticsFormatter.Describe(Snapshot());
 
         Assert.Contains(lines, l => l.StartsWith("Red: con conexión", StringComparison.Ordinal));
-        Assert.Contains(lines, l => l.StartsWith("Pista descargada: disponible (2 de 3 listas)", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.StartsWith("Pistas descargadas: disponible (2 en caché)", StringComparison.Ordinal));
         Assert.Contains(lines, l => l.StartsWith("Reproductor: En espera", StringComparison.Ordinal));
         Assert.Contains(lines, l => l.StartsWith("Descarga en curso: no", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void Describe_marks_no_track_available_when_the_buffer_is_empty()
+    public void Describe_marks_no_track_available_when_the_cache_is_empty()
     {
-        IReadOnlyList<string> lines = DiagnosticsFormatter.Describe(Snapshot(ready: 0, target: 3));
+        IReadOnlyList<string> lines = DiagnosticsFormatter.Describe(Snapshot(downloaded: 0));
 
-        Assert.Contains(lines, l => l.StartsWith("Pista descargada: NINGUNA disponible (0 de 3)", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.StartsWith("Pistas descargadas: NINGUNA (0)", StringComparison.Ordinal));
     }
 
     [Fact]
     public void Describe_shows_unknown_network_before_the_first_check()
     {
         var snapshot = new DiagnosticsSnapshot(
-            NetworkState.Unknown, null, 0, 3, [], false, "En espera");
+            NetworkState.Unknown, null, 0, [], false, "En espera");
 
         IReadOnlyList<string> lines = DiagnosticsFormatter.Describe(snapshot);
 

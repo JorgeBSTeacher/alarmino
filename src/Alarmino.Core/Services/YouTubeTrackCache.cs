@@ -3,28 +3,16 @@ using System.Text.Json;
 namespace Alarmino.Core.Services;
 
 /// <summary>
-/// Estado del búfer de descargas: cuántas pistas sin consumir hay listas para el
-/// próximo arranque frente al objetivo configurado.
-/// </summary>
-public readonly record struct BufferState(int Ready, int Target)
-{
-    /// <summary>True si ya hay tantas pistas listas como pide el objetivo.</summary>
-    public bool IsFull => Target <= 0 || Ready >= Target;
-}
-
-/// <summary>
-/// Caché de pistas de YouTube descargadas por adelantado (una por playlist).
-/// Permite que la alarma empiece a sonar a su hora sin esperar una descarga.
-/// Solo guarda las últimas <see cref="MaxTracks"/> pistas y borra el resto.
+/// Caché de pistas de YouTube descargadas por adelantado. Guarda todas las pistas
+/// de cada playlist y las conserva hasta que la sincronización con la lista
+/// remota diga que ya no están. Permite que la alarma empiece a sonar a su hora
+/// sin esperar una descarga.
 /// </summary>
 public sealed class YouTubeTrackCache
 {
-    /// <summary>Número máximo de pistas guardadas a la vez (una por playlist).</summary>
-    public const int MaxTracks = 3;
-
     private readonly string _dir;
     private readonly object _gate = new();
-    private readonly Dictionary<string, Entry> _entries = new();
+    private readonly Dictionary<(string PlaylistId, string VideoId), Entry> _entries = new();
     private readonly HashSet<string> _pendingWrites = new(StringComparer.OrdinalIgnoreCase);
 
     public YouTubeTrackCache(string dir) => _dir = dir;
@@ -68,37 +56,29 @@ public sealed class YouTubeTrackCache
     }
 
     /// <summary>
-    /// Registra una pista recién descargada. Sustituye la anterior de esa
-    /// playlist, descarta la más antigua si se supera <see cref="MaxTracks"/> y
-    /// borra los archivos huérfanos de la carpeta.
+    /// Registra una pista recién descargada. Solo añade o actualiza esa pista
+    /// concreta: las demás pistas de la misma playlist se conservan. Si la misma
+    /// pista se registra con otra ruta, el archivo anterior se borra.
     /// </summary>
     public void Register(string playlistId, string videoId, string filePath, DateTime downloadedAtUtc, bool consumed = false)
     {
         var toDelete = new List<string>();
+        var key = (playlistId, videoId);
 
         lock (_gate)
         {
-            if (_entries.TryGetValue(playlistId, out var previous))
+            if (_entries.TryGetValue(key, out var previous) &&
+                !string.Equals(previous.FilePath, filePath, StringComparison.OrdinalIgnoreCase))
             {
                 toDelete.Add(previous.FilePath);
             }
 
             _pendingWrites.Remove(filePath);
-            _entries[playlistId] = new Entry(videoId, filePath, downloadedAtUtc)
+            _entries[key] = new Entry(videoId, filePath, downloadedAtUtc)
             {
                 Consumed = consumed,
                 ExpectedBytes = TryGetFileSize(filePath),
             };
-
-            while (_entries.Count > MaxTracks)
-            {
-                var oldest = _entries.OrderBy(e => e.Value.DownloadedAtUtc).First();
-                toDelete.Add(oldest.Value.FilePath);
-                _entries.Remove(oldest.Key);
-            }
-
-            var referenced = new HashSet<string>(_entries.Values.Select(e => e.FilePath), StringComparer.OrdinalIgnoreCase);
-            toDelete.AddRange(ListStaleFiles(referenced));
         }
 
         DeleteFiles(toDelete);
@@ -106,54 +86,71 @@ public sealed class YouTubeTrackCache
     }
 
     /// <summary>
-    /// Toma la pista precargada de una playlist (para reproducirla ya) y la
-    /// marca como consumida, de modo que se vuelva a precargar otra.
+    /// Elige al azar una pista descargada de la playlist cuyo vídeo no esté en
+    /// <paramref name="excludedVideoIds"/> y cuyo archivo siga existiendo. La
+    /// marca como consumida solo para el diagnóstico y persiste el manifiesto
+    /// una vez. Devuelve false si no queda ninguna candidata.
     /// </summary>
-    public bool TryTake(string playlistId, out string? filePath, out string? videoId)
+    public bool TryTakeRandom(string playlistId, IReadOnlySet<string> excludedVideoIds, out string? filePath, out string? videoId)
     {
         lock (_gate)
         {
-            if (!_entries.TryGetValue(playlistId, out var entry) ||
-                entry.Consumed ||
-                !File.Exists(entry.FilePath))
+            var candidates = _entries
+                .Where(kv => string.Equals(kv.Key.PlaylistId, playlistId, StringComparison.Ordinal) &&
+                             File.Exists(kv.Value.FilePath) &&
+                             !excludedVideoIds.Contains(kv.Key.VideoId))
+                .Select(kv => kv.Value)
+                .ToList();
+
+            if (candidates.Count == 0)
             {
-                _entries.Remove(playlistId);
                 filePath = null;
                 videoId = null;
                 return false;
             }
 
-            entry.Consumed = true;
-            filePath = entry.FilePath;
-            videoId = entry.VideoId;
+            Entry chosen = candidates[Random.Shared.Next(candidates.Count)];
+            chosen.Consumed = true;
+            filePath = chosen.FilePath;
+            videoId = chosen.VideoId;
             SaveManifest();
             return true;
         }
     }
 
-    /// <summary>True si hay una pista sin usar y bastante reciente para no volver a descargar.</summary>
-    public bool IsFresh(string playlistId, TimeSpan maxAge, DateTime nowUtc)
+    /// <summary>Ids de vídeo de esa playlist que tienen archivo en disco.</summary>
+    public IReadOnlyList<string> GetVideoIds(string playlistId)
     {
         lock (_gate)
         {
-            return _entries.TryGetValue(playlistId, out var entry) &&
-                   !entry.Consumed &&
-                   File.Exists(entry.FilePath) &&
-                   nowUtc - entry.DownloadedAtUtc < maxAge;
+            return _entries
+                .Where(kv => string.Equals(kv.Key.PlaylistId, playlistId, StringComparison.Ordinal) &&
+                             File.Exists(kv.Value.FilePath))
+                .Select(kv => kv.Key.VideoId)
+                .ToList();
         }
     }
 
-    /// <summary>
-    /// Cuántas pistas sin consumir hay listas (y existen en disco) frente al
-    /// objetivo del búfer. Las pistas ya sonadas no cuentan: no sirven para el
-    /// próximo arranque en frío.
-    /// </summary>
-    public BufferState GetBufferState(int target)
+    /// <summary>Pistas descargadas (con archivo en disco) de esa playlist.</summary>
+    public int GetDownloadedCount(string playlistId)
     {
         lock (_gate)
         {
-            int ready = _entries.Values.Count(e => !e.Consumed && File.Exists(e.FilePath));
-            return new BufferState(ready, Math.Max(0, target));
+            return _entries.Count(kv =>
+                string.Equals(kv.Key.PlaylistId, playlistId, StringComparison.Ordinal) &&
+                File.Exists(kv.Value.FilePath));
+        }
+    }
+
+    /// <summary>Pistas descargadas (con archivo en disco) de todas las playlists.</summary>
+    public int TotalDownloadedCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _entries.Count(kv => File.Exists(kv.Value.FilePath));
+            }
         }
     }
 
@@ -167,10 +164,11 @@ public sealed class YouTubeTrackCache
         lock (_gate)
         {
             return _entries
-                .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .OrderBy(kv => kv.Key.PlaylistId, StringComparer.Ordinal)
+                .ThenBy(kv => kv.Key.VideoId, StringComparer.Ordinal)
                 .Select(kv => new CachedTrackInfo(
-                    kv.Key,
-                    kv.Value.VideoId,
+                    kv.Key.PlaylistId,
+                    kv.Key.VideoId,
                     kv.Value.Consumed,
                     File.Exists(kv.Value.FilePath),
                     TryGetFileSize(kv.Value.FilePath) ?? 0,
@@ -180,10 +178,10 @@ public sealed class YouTubeTrackCache
     }
 
     /// <summary>
-    /// Recupera las pistas que ya estaban descargadas en la carpeta (sesiones
-    /// anteriores) para poder sonar a la hora sin descargar nada. Una pista que
-    /// no supera las comprobaciones de integridad (p. ej. truncada por un corte
-    /// de luz) se descarta y se borra en lugar de registrarse.
+    /// Recupera todas las pistas que ya estaban descargadas en la carpeta
+    /// (sesiones anteriores) para poder sonar a la hora sin descargar nada. Una
+    /// pista que no supera las comprobaciones de integridad (p. ej. truncada por
+    /// un corte de luz) se descarta y se borra en lugar de registrarse.
     /// </summary>
     public void LoadExisting()
     {
@@ -201,7 +199,7 @@ public sealed class YouTubeTrackCache
             return;
         }
 
-        Dictionary<string, ManifestEntry> manifest = LoadManifest();
+        ManifestLookup manifest = LoadManifest();
 
         var obsolete = new List<string>();
         var parsed = new List<(string PlaylistId, string VideoId, FileInfo File)>();
@@ -229,7 +227,9 @@ public sealed class YouTubeTrackCache
 
         foreach ((string playlistId, string videoId, FileInfo file) in parsed)
         {
-            if (_entries.TryGetValue(playlistId, out var existing))
+            var key = (playlistId, videoId);
+
+            if (_entries.TryGetValue(key, out var existing))
             {
                 // Ya estaba registrada (p. ej. la acaba de dejar este proceso).
                 if (!string.Equals(existing.FilePath, file.FullName, StringComparison.OrdinalIgnoreCase))
@@ -243,11 +243,8 @@ public sealed class YouTubeTrackCache
             // Un archivo recuperado del disco solo se registra si supera las
             // comprobaciones de integridad: un fragmento truncado por un corte
             // de luz se descarta aquí y no llega nunca a NAudio.
-            ManifestEntry? known = manifest.GetValueOrDefault(playlistId);
-            if (known is not null && !string.Equals(known.VideoId, videoId, StringComparison.Ordinal))
-            {
-                known = null;
-            }
+            ManifestEntry? known = manifest.ByVideo.GetValueOrDefault(key) ??
+                                   manifest.ByFileName.GetValueOrDefault(file.Name);
 
             if (!TrackSanity.LooksPlayable(file.FullName, known?.SizeBytes))
             {
@@ -256,7 +253,7 @@ public sealed class YouTubeTrackCache
                 continue;
             }
 
-            _entries[playlistId] = new Entry(videoId, file.FullName, file.LastWriteTimeUtc)
+            _entries[key] = new Entry(videoId, file.FullName, file.LastWriteTimeUtc)
             {
                 // El estado consumido debe sobrevivir al reinicio: una pista ya
                 // sonada no se vuelve a servir en la próxima sesión.
@@ -267,23 +264,13 @@ public sealed class YouTubeTrackCache
         }
 
         DeleteFiles(obsolete);
-        Prune();
         SaveManifest();
     }
 
-    /// <summary>Vídeo almacenado para esa playlist, esté o no consumido.</summary>
-    public string? PeekVideoId(string playlistId)
-    {
-        lock (_gate)
-        {
-            return _entries.TryGetValue(playlistId, out var entry) ? entry.VideoId : null;
-        }
-    }
-
     /// <summary>
-    /// Borra la pista de una playlist si su vídeo ya no está en la lista remota.
-    /// Devuelve las rutas realmente retiradas de la caché (vacío si no había
-    /// nada que borrar).
+    /// Borra todas las pistas de una playlist cuyo vídeo ya no está en la lista
+    /// remota. Devuelve las rutas realmente retiradas de la caché (vacío si no
+    /// había nada que borrar).
     /// <para>
     /// Un <paramref name="allowedVideoIds"/> vacío NO borra nada: un conjunto
     /// vacío es indistinguible de «la consulta a la playlist devolvió cero
@@ -315,46 +302,55 @@ public sealed class YouTubeTrackCache
         }
 
         var removed = new List<string>();
-        bool changed = false;
+        var blocked = new List<string>();
 
         lock (_gate)
         {
-            if (!_entries.TryGetValue(playlistId, out var entry))
+            foreach (var key in _entries.Keys
+                         .Where(k => string.Equals(k.PlaylistId, playlistId, StringComparison.Ordinal))
+                         .ToList())
             {
-                return [];
-            }
+                if (allowedVideoIds.Contains(key.VideoId))
+                {
+                    continue;
+                }
 
-            if (allowedVideoIds.Contains(entry.VideoId))
-            {
-                return [];
-            }
+                Entry entry = _entries[key];
+                if (_pendingWrites.Contains(entry.FilePath))
+                {
+                    blocked.Add(key.VideoId);
+                    continue;
+                }
 
-            if (_pendingWrites.Contains(entry.FilePath))
-            {
-                AppendLog($"no se borra la pista en curso de {playlistId}: la descarga sigue escribiendo {Path.GetFileName(entry.FilePath)}.");
-                return [];
+                _entries.Remove(key);
+                removed.Add(entry.FilePath);
             }
-
-            _entries.Remove(playlistId);
-            removed.Add(entry.FilePath);
-            changed = true;
         }
 
-        if (changed)
+        foreach (string videoId in blocked)
+        {
+            AppendLog($"no se borra la pista en curso de {playlistId}: la descarga sigue escribiendo {Describe(videoId)}.");
+        }
+
+        if (removed.Count > 0)
         {
             DeleteFiles(removed);
             SaveManifest();
-            AppendLog($"se borra pista que ya no está en la playlist ({playlistId}): {Path.GetFileName(removed[0])}.");
+            foreach (string filePath in removed)
+            {
+                AppendLog($"se borra pista que ya no está en la playlist ({playlistId}): {Path.GetFileName(filePath)}.");
+            }
         }
 
         return removed;
     }
 
     /// <summary>
-    /// Borra las pistas de las playlists que ya no usa ninguna alarma y devuelve
-    /// las rutas retiradas de la caché (vacío si no había nada que borrar). La
-    /// baja del manifiesto es siempre efectiva, aunque el borrado del archivo se
-    /// traguen (queda en uso por una reproducción): el siguiente barrido lo deja.
+    /// Borra todas las pistas de las playlists que ya no usa ninguna alarma y
+    /// devuelve las rutas retiradas de la caché (vacío si no había nada que
+    /// borrar). La baja del manifiesto es siempre efectiva, aunque el borrado del
+    /// archivo se traguen (queda en uso por una reproducción): el siguiente
+    /// barrido lo deja.
     /// <para>
     /// Solo mira la pertenencia del id de playlist al conjunto de playlists en
     /// uso (ajustes y alarmas): es un barrido puramente local. NO consulta la red
@@ -391,30 +387,30 @@ public sealed class YouTubeTrackCache
 
         lock (_gate)
         {
-            foreach (string playlistId in _entries.Keys.ToList())
+            foreach (var key in _entries.Keys.ToList())
             {
-                if (allowedPlaylistIds.Contains(playlistId))
+                if (allowedPlaylistIds.Contains(key.PlaylistId))
                 {
                     continue;
                 }
 
-                Entry entry = _entries[playlistId];
+                Entry entry = _entries[key];
                 if (_pendingWrites.Contains(entry.FilePath))
                 {
                     // Se deja fuera del barrido pero sigue en la caché: la descarga
                     // en curso lo registrará al terminar.
-                    blocked.Add(playlistId);
+                    blocked.Add($"{key.PlaylistId}/{key.VideoId}");
                     continue;
                 }
 
-                _entries.Remove(playlistId);
+                _entries.Remove(key);
                 removed.Add(entry.FilePath);
             }
         }
 
-        foreach (string playlistId in blocked)
+        foreach (string track in blocked)
         {
-            AppendLog($"no se borra la pista en curso de la playlist abandonada {playlistId}: la descarga sigue escribiendo.");
+            AppendLog($"no se borra la pista en curso de la playlist abandonada {track}: la descarga sigue escribiendo.");
         }
 
         if (removed.Count > 0)
@@ -431,47 +427,6 @@ public sealed class YouTubeTrackCache
         }
 
         return removed;
-    }
-
-    private bool IsPending(string path)
-    {
-        lock (_gate)
-        {
-            return _pendingWrites.Contains(path);
-        }
-    }
-
-    private void Prune()
-    {
-        while (_entries.Count > MaxTracks)
-        {
-            var oldest = _entries.OrderBy(e => e.Value.DownloadedAtUtc).First();
-            _entries.Remove(oldest.Key);
-            TryDelete(oldest.Value.FilePath);
-        }
-    }
-
-    private List<string> ListStaleFiles(HashSet<string> referenced)
-    {
-        if (!Directory.Exists(_dir))
-        {
-            return [];
-        }
-
-        try
-        {
-            return Directory.GetFiles(_dir)
-                .Where(f => !referenced.Contains(f) && !IsPending(f) && !IsManifestFile(f))
-                .ToList();
-        }
-        catch (IOException)
-        {
-            return [];
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return [];
-        }
     }
 
     /// <summary>Estado persistente de una pista, para recuperarlo en la próxima sesión.</summary>
@@ -495,6 +450,14 @@ public sealed class YouTubeTrackCache
         public List<ManifestEntry> Tracks { get; set; } = [];
     }
 
+    /// <summary>Índices del manifiesto: por (playlist, vídeo) y por nombre de archivo.</summary>
+    private sealed class ManifestLookup
+    {
+        public Dictionary<(string PlaylistId, string VideoId), ManifestEntry> ByVideo { get; } = new();
+
+        public Dictionary<string, ManifestEntry> ByFileName { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     private static bool IsManifestFile(string path) =>
         string.Equals(Path.GetFileName(path), ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(Path.GetFileName(path), ManifestFileName + ".tmp", StringComparison.OrdinalIgnoreCase);
@@ -515,27 +478,39 @@ public sealed class YouTubeTrackCache
         }
     }
 
-    /// <summary>Lee el manifiesto: playlistId → estado de su pista.</summary>
-    private Dictionary<string, ManifestEntry> LoadManifest()
+    /// <summary>Lee el manifiesto: (playlistId, videoId) → estado de su pista.</summary>
+    private ManifestLookup LoadManifest()
     {
+        var lookup = new ManifestLookup();
         try
         {
             if (!File.Exists(ManifestPath))
             {
-                return new Dictionary<string, ManifestEntry>(StringComparer.Ordinal);
+                return lookup;
             }
 
             var data = JsonSerializer.Deserialize<ManifestData>(File.ReadAllText(ManifestPath), JsonOptions);
-            return data?.Tracks?
-                .Where(t => !string.IsNullOrEmpty(t.PlaylistId) && !string.IsNullOrEmpty(t.FileName))
-                .GroupBy(t => t.PlaylistId, StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal)
-                ?? new Dictionary<string, ManifestEntry>(StringComparer.Ordinal);
+            foreach (ManifestEntry entry in data?.Tracks ?? [])
+            {
+                if (string.IsNullOrEmpty(entry.PlaylistId) || string.IsNullOrEmpty(entry.FileName))
+                {
+                    continue;
+                }
+
+                // El manifiesto de versiones anteriores guardaba una sola pista
+                // por playlist, pero ya traía el id de vídeo: la clave compuesta
+                // lo carga tal cual. Sin id de vídeo se cae al nombre de archivo.
+                var key = (entry.PlaylistId, entry.VideoId ?? string.Empty);
+                lookup.ByVideo.TryAdd(key, entry);
+                lookup.ByFileName.TryAdd(entry.FileName, entry);
+            }
+
+            return lookup;
         }
         catch (Exception ex)
         {
             AppendLog($"manifiesto ilegible ({ex.Message}).");
-            return new Dictionary<string, ManifestEntry>(StringComparer.Ordinal);
+            return new ManifestLookup();
         }
     }
 
@@ -552,8 +527,8 @@ public sealed class YouTubeTrackCache
                 {
                     Tracks = _entries.Select(e => new ManifestEntry
                     {
-                        PlaylistId = e.Key,
-                        VideoId = e.Value.VideoId,
+                        PlaylistId = e.Key.PlaylistId,
+                        VideoId = e.Key.VideoId,
                         FileName = Path.GetFileName(e.Value.FilePath),
                         DownloadedAtUtc = e.Value.DownloadedAtUtc,
                         Consumed = e.Value.Consumed,
@@ -580,6 +555,8 @@ public sealed class YouTubeTrackCache
     }
 
     private static void AppendLog(string message) => OperationLog.Write("cache", message);
+
+    private static string Describe(string? videoId) => string.IsNullOrWhiteSpace(videoId) ? "sin id" : videoId;
 
     private static void DeleteFiles(IEnumerable<string> paths)
     {

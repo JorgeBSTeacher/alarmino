@@ -81,7 +81,6 @@ public sealed partial class MainViewModel : ObservableObject
         _youtube = new YouTubeAudioResolver
         {
             NoRepeatDays = _settings.NoRepeatDays,
-            TargetBufferCount = _settings.TargetBufferCount,
         };
         _audio = new AudioService(
             resolvePresetFile: id => SoundPresets.ResolveFilePath(id, _settings.PresetOverrides),
@@ -543,13 +542,11 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Texto del indicador de red: con/sin conexión y cuándo se comprobó.</summary>
     public string NetworkStatusText => DiagnosticsFormatter.DescribeNetwork(_networkState, _network.CheckedUtc);
 
-    /// <summary>Texto del indicador de pistas: si hay alguna descargada y lista.</summary>
-    public string TrackStatusText => DiagnosticsFormatter.DescribeTracks(
-        _youtube.ReadyTrackCount,
-        _youtube.TargetTrackCount);
+    /// <summary>Texto del indicador de pistas: cuántas hay descargadas.</summary>
+    public string TrackStatusText => DiagnosticsFormatter.DescribeTracks(_youtube.DownloadedTrackCount);
 
-    /// <summary>True si hay alguna pista descargada lista (el indicador se pinta en verde).</summary>
-    public bool HasReadyTrack => _youtube.ReadyTrackCount > 0;
+    /// <summary>True si hay alguna pista descargada (el indicador se pinta en verde).</summary>
+    public bool HasReadyTrack => _youtube.DownloadedTrackCount > 0;
 
     /// <summary>Detalle del estado: caché de pistas y reproductor.</summary>
     public string DiagnosticsDetails => _diagnosticsDetails;
@@ -627,8 +624,7 @@ public sealed partial class MainViewModel : ObservableObject
             var snapshot = new DiagnosticsSnapshot(
                 state,
                 _network.CheckedUtc,
-                _youtube.ReadyTrackCount,
-                _youtube.TargetTrackCount,
+                _youtube.DownloadedTrackCount,
                 _youtube.DescribeCachedTracks(),
                 _isDownloading,
                 PlayerStatusText);
@@ -1216,8 +1212,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>
     /// Borra de la caché las playlists que ya no usa ninguna alarma (el usuario
-    /// cambió la alarma de la playlist A a la B y A se quedaba ocupando una de las
-    /// tres plazas de la caché hasta que la purga por antigüedad la desalojara).
+    /// cambió la alarma de la playlist A a la B y A seguía ocupando espacio).
     /// </summary>
     /// <remarks>
     /// El barrido es puramente local: solo compara los ids de playlist en uso
@@ -1490,7 +1485,6 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _store.SaveSettings(_settings);
         _youtube.NoRepeatDays = _settings.NoRepeatDays;
-        _youtube.TargetBufferCount = _settings.TargetBufferCount;
         PrefetchYouTube();
         RequestOrphanSweep();
     }

@@ -38,22 +38,20 @@ public readonly record struct CachedTrackInfo(
 /// </summary>
 /// <param name="Network">Estado de la conexión.</param>
 /// <param name="NetworkCheckedUtc">Cuándo se comprobó la conexión por última vez.</param>
-/// <param name="ReadyTracks">Pistas sin usar listas para la próxima alarma.</param>
-/// <param name="TargetTracks">Objetivo de pistas del búfer.</param>
+/// <param name="DownloadedTracks">Pistas descargadas y presentes en disco.</param>
 /// <param name="Tracks">Detalle de las pistas guardadas.</param>
 /// <param name="DownloadActive">True si hay una descarga en curso.</param>
 /// <param name="PlayerState">Texto del reproductor.</param>
 public readonly record struct DiagnosticsSnapshot(
     NetworkState Network,
     DateTime? NetworkCheckedUtc,
-    int ReadyTracks,
-    int TargetTracks,
+    int DownloadedTracks,
     IReadOnlyList<CachedTrackInfo> Tracks,
     bool DownloadActive,
     string PlayerState)
 {
-    /// <summary>True si hay al menos una pista lista para la próxima alarma.</summary>
-    public bool HasReadyTrack => ReadyTracks > 0;
+    /// <summary>True si hay al menos una pista descargada para la próxima alarma.</summary>
+    public bool HasReadyTrack => DownloadedTracks > 0;
 }
 
 /// <summary>
@@ -68,7 +66,7 @@ public static class DiagnosticsFormatter
         var lines = new List<string>
         {
             DescribeNetwork(snapshot.Network, snapshot.NetworkCheckedUtc),
-            DescribeTracks(snapshot.ReadyTracks, snapshot.TargetTracks),
+            DescribeTracks(snapshot.DownloadedTracks),
         };
 
         if (snapshot.Tracks.Count == 0)
@@ -105,11 +103,11 @@ public static class DiagnosticsFormatter
     }
 
     /// <summary>Disponibilidad de pistas descargadas en una línea legible.</summary>
-    public static string DescribeTracks(int ready, int target)
+    public static string DescribeTracks(int downloaded)
     {
-        return ready > 0
-            ? $"Pista descargada: disponible ({ready} de {target} listas)"
-            : $"Pista descargada: NINGUNA disponible (0 de {target})";
+        return downloaded > 0
+            ? $"Pistas descargadas: disponible ({downloaded} en caché)"
+            : "Pistas descargadas: NINGUNA (0)";
     }
 
     /// <summary>Detalle de una pista en caché.</summary>

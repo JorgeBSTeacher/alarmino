@@ -48,34 +48,33 @@ public sealed class BootReadinessTests : IDisposable
     // ---------- Helper puro de veredicto ----------
 
     [Fact]
-    public void A_ready_playlist_is_reported_as_ready_with_its_counts()
+    public void A_ready_playlist_is_reported_as_ready_with_its_count()
     {
-        string verdict = BootReadiness.Describe("PL123abc", new BufferState(1, 3));
+        string verdict = BootReadiness.Describe(new TrackReadiness("PL123abc", 1));
 
         Assert.Contains("PL123abc", verdict);
-        Assert.Contains("1/3", verdict);
-        Assert.Contains("listas", verdict);
+        Assert.Contains("1 pista(s) descargada(s).", verdict);
     }
 
     [Fact]
     public void An_empty_playlist_is_reported_as_not_ready()
     {
-        string verdict = BootReadiness.Describe("PLxyz", new BufferState(0, 3));
+        string verdict = BootReadiness.Describe(new TrackReadiness("PLxyz", 0));
 
         Assert.Contains("PLxyz", verdict);
-        Assert.Contains("0/3", verdict);
+        Assert.Contains("nada descargado (0)", verdict);
         // El veredicto distingue el caso vacío del listo de forma explícita.
-        Assert.NotEqual(verdict, BootReadiness.Describe("PLxyz", new BufferState(1, 3)));
+        Assert.NotEqual(verdict, BootReadiness.Describe(new TrackReadiness("PLxyz", 1)));
         Assert.Contains("descarga", verdict);
     }
 
     [Fact]
     public void A_ready_playlist_reports_a_track_was_available()
     {
-        // Una playlist se considera preparada en cuanto tiene alguna pista sin consumir,
-        // aunque el búfer no esté lleno: la alarma puede sonar sin descargar.
-        Assert.True(new TrackReadiness("PL1", 1, 3).IsReady);
-        Assert.False(new TrackReadiness("PL1", 0, 3).IsReady);
+        // Una playlist se considera preparada en cuanto tiene alguna pista
+        // descargada: la alarma puede sonar sin descargar.
+        Assert.True(new TrackReadiness("PL1", 1).IsReady);
+        Assert.False(new TrackReadiness("PL1", 0).IsReady);
     }
 
     // ---------- API de comprobación en el resolutor ----------
@@ -94,8 +93,7 @@ public sealed class BootReadinessTests : IDisposable
         TrackReadiness verdict = Assert.Single(verdicts);
         Assert.Equal("PL123abc", verdict.PlaylistId);
         Assert.True(verdict.IsReady);
-        Assert.Equal(1, verdict.Ready);
-        Assert.Equal(3, verdict.Target);
+        Assert.Equal(1, verdict.Downloaded);
     }
 
     [Fact]
@@ -108,7 +106,7 @@ public sealed class BootReadinessTests : IDisposable
         TrackReadiness verdict = Assert.Single(verdicts);
         Assert.Equal("PLxyz", verdict.PlaylistId);
         Assert.False(verdict.IsReady);
-        Assert.Equal(0, verdict.Ready);
+        Assert.Equal(0, verdict.Downloaded);
     }
 
     [Fact]
